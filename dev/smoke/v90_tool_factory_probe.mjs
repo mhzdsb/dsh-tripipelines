@@ -13,7 +13,7 @@ const check = (label, cond, extra) => {
   else { failed++; console.log(`FAIL  ${label}${extra ? `  :: ${extra}` : ''}`) }
 }
 
-const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js']
+const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js']
 for (const f of flat) copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 mkdirSync(join(tmp, 'knowledge'), { recursive: true })

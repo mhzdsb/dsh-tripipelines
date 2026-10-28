@@ -18,7 +18,7 @@ const check = (label, cond, extra) => {
   }
 }
 
-const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js']
+const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js']
 for (const f of flat) copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 for (const f of ['l1.js', 'l2l3.js']) copyFileSync(new URL('plugin/lib/tools/' + f, root), join(tmp, 'tools', f))
@@ -189,7 +189,7 @@ check('package.json exports ./client', pkg.exports?.['./client'] === './client.j
 check('package.json ships client.js', Array.isArray(pkg.files) && pkg.files.includes('client.js'))
 check('package.json declares dsh.client', pkg.dsh?.client?.platform === 'web' && pkg.dsh?.client?.immediately === true)
 const pluginMainSrc = readFileSync(new URL('plugin/lib/plugin.js', root), 'utf8')
-check('plugin opts out of bootstrap restore', pluginMainSrc.includes('createStore(cfg, { restore: false })'))
+check('plugin creates per-workspace stores (v103)', pluginMainSrc.includes('createWorkspaceRegistry'))
 check('route handler has a build tag', readFileSync(new URL('plugin/lib/board-route.js', root), 'utf8').includes('BUILD_TAG'))
 // v96 — module-count nudges: soft hints on plan + spawn, and a sizing guide in the skill.
 const l1Src = readFileSync(new URL('plugin/lib/tools/l1.js', root), 'utf8')

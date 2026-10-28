@@ -34,7 +34,7 @@ export function cleanupExpiredL2s(subs, agent, r, cfg) {
 // (e.g. "add(2,3)==5"). Returns null when no assertion is present (caller falls
 // back to the semantic keyword score). Uses a Python subprocess with result file
 // (no piped stdout, so it works under the DSH sandbox).
-export function executeAcceptance(code, acceptance) {
+export function executeAcceptance(code, acceptance, baseDir) {
   const assertionRe = /([A-Za-z_]\w*)\s*\(\s*([^)]*)\s*\)\s*==\s*([^\s,;]+)/g
   const assertions = []
   let m
@@ -44,7 +44,8 @@ export function executeAcceptance(code, acceptance) {
   if (assertions.length === 0) return null
 
   // v89 — per-call scratch dir: concurrent L3 reviews no longer overwrite each other.
-  const dir = join(runtimeStateDir(), 'exec', randomUUID())
+  // v103 — scratch lives under the calling WORKSPACE's state dir, not the daemon cwd.
+  const dir = join(baseDir ?? runtimeStateDir(), 'exec', randomUUID())
   try { mkdirSync(dir, { recursive: true }) } catch { /* best-effort */ }
   const testFile = join(dir, 'test.py')
   const resultFile = join(dir, 'result.json')
@@ -90,7 +91,7 @@ export function executeAcceptance(code, acceptance) {
   return { ran: true, checks, assertions, passed, total: results.length }
 }
 
-export function gateSubtask(result, expectedId, acceptance, cfg) {
+export function gateSubtask(result, expectedId, acceptance, cfg, baseDir) {
   const checks = []
   let ok = true
 
@@ -118,7 +119,7 @@ export function gateSubtask(result, expectedId, acceptance, cfg) {
   // keyword score when no assertion is present (or Python is unavailable).
   let score
   if (codeOk) {
-    const exec = executeAcceptance(result.code, acceptance)
+    const exec = executeAcceptance(result.code, acceptance, baseDir)
     if (exec && exec.ran) {
       checks.push(...exec.checks)
       score = exec.total > 0 ? exec.passed / exec.total : 0
@@ -138,7 +139,7 @@ export function gateSubtask(result, expectedId, acceptance, cfg) {
   return { ok, score: Number(score.toFixed(3)), checks }
 }
 
-export function gateTask(task, subtaskRecords, cfg, fileCode) {
+export function gateTask(task, subtaskRecords, cfg, fileCode, baseDir) {
   const checks = []
   let ok = true
   const allDone = subtaskRecords.every((s) => s.state === 'done')

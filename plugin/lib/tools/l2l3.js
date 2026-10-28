@@ -8,6 +8,12 @@ import { buildL3ExecutorPrompt } from '../prompts.js'
 import { gateSubtask, gateTask } from '../gates.js'
 import { addRunUsage } from '../store.js'
 
+// v103 — resolve tool-supplied paths against the calling workspace, not the
+// daemon process cwd (which is the profile directory).
+function wsPath(r, p) {
+  return resolve((r && r.store && r.store.workspaceRoot) || process.cwd(), p)
+}
+
 // Level-2 decomposition via the configured flash model (deepseek-v4.1-flash).
 // Returns an array of subtask descriptions, or throws to trigger the
 // deterministic fallback.
@@ -391,9 +397,9 @@ export function makeReviewTool(ctx, cfg, r) {
         if (s.state !== 'review') throw new Error(`subtask ${s.id} is ${s.state}; must be review`)
         let code = s.code
         if (args.filePath) {
-          try { code = readFileSync(resolve(args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
+          try { code = readFileSync(wsPath(r, args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
         }
-        const gate = gateSubtask({ subtask_id: s.id, code, status: s.status }, s.id, s.acceptance, cfg)
+        const gate = gateSubtask({ subtask_id: s.id, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
         if (gate.ok) {
           s.state = 'done'
           s.reason = null
@@ -423,7 +429,7 @@ export function makeReviewTool(ctx, cfg, r) {
         // v93 — a real workspace file may stand in for the board snippets.
         let fileCode
         if (args.filePath) {
-          try { fileCode = readFileSync(resolve(args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
+          try { fileCode = readFileSync(wsPath(r, args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
         }
         // Upstream (Level-3) failure blocks module acceptance — unless L1 reviews a
         // real workspace file, which supersedes the stale/broken board record.
@@ -434,7 +440,7 @@ export function makeReviewTool(ctx, cfg, r) {
           r.record(t.assignee, 'failed', 'review_result', 'level1_main', t.id, t.desc, t.reason, t.acceptance)
           return { level: 2, id: t.id, ok: false, blocked: true, reason: t.reason, state: 'failed' }
         }
-        const gate = gateTask(t, subs, cfg, fileCode)
+        const gate = gateTask(t, subs, cfg, fileCode, r.store.stateDir)
         if (gate.ok) {
           if (failedSub) {
             failedSub.state = 'done'
@@ -527,6 +533,8 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
           provider: 'ninfer-local',
           model: cfg.level3Model,
         })
+        // v103 — L3 runs in the daemon profile cwd; bind it to this workspace.
+        try { r.bindChild?.(run.childId) } catch { /* best-effort */ }
         // Await the one-shot run's completion (with a timeout) so the board tracks done/failed.
         let state = 'done'
         let reason = null
@@ -590,11 +598,11 @@ export function makeRegisterOutputTool(ctx, cfg, r) {
       if (!s) throw new Error(`unknown subtask id: ${args.subtaskId}`)
       let code = args.code
       if (!code && args.filePath) {
-        try { code = readFileSync(resolve(args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
+        try { code = readFileSync(wsPath(r, args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
       }
       if (typeof code !== 'string' || !code.trim()) throw new Error('code (or filePath) must provide non-empty code')
       s.code = code.trim()
-      if (args.filePath) s.filePath = resolve(args.filePath)
+      if (args.filePath) s.filePath = wsPath(r, args.filePath)
       s.status = 'done'
       s.state = 'review'
       r.record(LEVEL2_NAMES[0], 'review', 'task_result', 'level1_main', s.id, s.desc, 'done (L2 takeover)', s.acceptance)

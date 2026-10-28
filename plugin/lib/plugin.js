@@ -8,17 +8,58 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { DEFAULT_CONFIG, loadPersistedConfig, savePersistedConfig, migratePersistedLevel3Config, mergeConfigLayers, loadProjectConfig, handleConfigCommand } from './config.js'
-import { createStore, milestoneStates, budgetRefusal } from './store.js'
+import { milestoneStates, budgetRefusal } from './store.js'
+import { createWorkspaceRegistry } from './workspaces.js'
 import { buildProtocolText, SKILL_BODY } from './prompts.js'
-import { resolveSession, measureLevel1Context } from './dsh-compat.js'
+import { measureLevel1Context } from './dsh-compat.js'
 import { installBoardRoute } from './board-route.js'
-import { RUN_FOOTER_TOOLS, withRunFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
+import { RUN_FOOTER_TOOLS, withRunFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, L2L3_TOOLS, strictAdjacencyDenial } from './guards.js'
 import { makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
 import { makeKnowledgeTools } from './tools/knowledge.js'
 import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeReviewTool, makeSpawnLocalExecutorTool, makeRegisterOutputTool } from './tools/l2l3.js'
 
 const name = 'pipeline'
 const inject = ['tools', 'systemPrompt', 'skills', 'commands', 'llm']
+
+// v103 — tool factories only need a store-shaped object while the plugin is
+// registered; the real per-workspace stores are created lazily by the registry.
+// This stub keeps registration side-effect free (no state dir, no files, no
+// cwd-relative writes).
+function definitionStore() {
+  const run = {
+    id: null, status: 'idle', startedAt: null, milestones: [], tokensUsed: 0,
+    filesTouched: [], scope: [], activation: 'unknown', paused: false, pauseReason: null,
+  }
+  const store = {
+    stateDir: '', workspaceRoot: null, runId: null, requirement: null, locked: false,
+    tasks: new Map(), subtasks: new Map(), agents: new Map(), messages: [],
+    counters: { llmCalls: 0, tokensIn: 0, tokensOut: 0, l2Spawns: 0, l2Sends: 0, l3Calls: 0, l3TokensIn: 0, l3TokensOut: 0 },
+    l3Concurrent: 0, context: { level1Tokens: 0 }, run,
+  }
+  return { store, stateDir: '', record: () => ({}), tracePath: () => '', boardPath: () => '', saveRun: () => {}, snapshotBoard: () => {}, bindSession: () => true }
+}
+
+function buildEntryTools(ctx, cfg, r) {
+  return [
+    makeLockTool(ctx, cfg, r),
+    makePlanTool(ctx, cfg, r),
+    makeDecomposeTool(ctx, cfg, r),
+    makeExecuteLocalTool(ctx, cfg, r),
+    makeExecuteBatchTool(ctx, cfg, r),
+    makeReviewTool(ctx, cfg, r),
+    makeStatusTool(ctx, cfg, r),
+    makeSpawnModuleLeadTool(ctx, cfg, r),
+    makeSendToLeadTool(ctx, cfg, r),
+    makeDrainLeadsTool(ctx, cfg, r),
+    makeCheckpointTool(ctx, cfg, r),
+    makeClassifyTool(ctx, cfg, r),
+    makeSpawnLocalExecutorTool(ctx, cfg, r),
+    makeRegisterOutputTool(ctx, cfg, r),
+    makeSelftestTool(ctx, cfg, r),
+    makeAcceptMilestoneTool(ctx, cfg, r),
+    ...makeKnowledgeTools(ctx, cfg, r),
+  ]
+}
 
 
 // ---------------------------------------------------------------------------
@@ -33,11 +74,17 @@ function apply(ctx, config) {
   const persisted = migratePersistedLevel3Config(loadPersistedConfig())
   const baseCfg = mergeConfigLayers(DEFAULT_CONFIG, runtimeConfig, persisted, null)
   const cfg = mergeConfigLayers(baseCfg, loadProjectConfig(baseCfg.devDir), null, null)
-  const r = createStore(cfg, { restore: false })
 
-  // v93 — re-home the state onto the real workspace once a session is resolvable
-  // (cold start: run.json may already exist under the profile-directory fallback).
-  setImmediate(() => { try { r.alignTo(ctx) } catch { /* best-effort */ } })
+  // v103 — one fixed store per normalized workspace root. Created lazily, on the
+  // first tool call / command / board request that names a session or workspace,
+  // so loading the plugin enumerates nothing and reads no other project's state.
+  const definitionR = definitionStore()
+  const registry = createWorkspaceRegistry({
+    ctx,
+    cfg,
+    buildTools: (storeR) => buildEntryTools(ctx, cfg, storeR),
+    log: (msg) => console.log(msg),
+  })
 
   // v89 — startup self-check (non-blocking): probe the local L3 engine once so a
   // dead endpoint shows up in the log now rather than at the first L3 dispatch.
@@ -77,84 +124,73 @@ function apply(ctx, config) {
   // 2b. GUI board (v92): a read-only GET /pipeline/board route that the Web UI
   //     status strip (client.js) polls. Soft capability: skipped on hosts without
   //     a webServer, and the model still has pipeline_status as the text view.
-  installBoardRoute(ctx, r, cfg)
+  installBoardRoute(ctx, registry, cfg)
 
-  // 3. Tool surface (v89: every L1 tool result carries the live run footer).
-  const tools = [
-    makeLockTool(ctx, cfg, r),
-    makePlanTool(ctx, cfg, r),
-    makeDecomposeTool(ctx, cfg, r),
-    makeExecuteLocalTool(ctx, cfg, r),
-    makeExecuteBatchTool(ctx, cfg, r),
-    makeReviewTool(ctx, cfg, r),
-    makeStatusTool(ctx, cfg, r),
-    makeSpawnModuleLeadTool(ctx, cfg, r),
-    makeSendToLeadTool(ctx, cfg, r),
-    makeDrainLeadsTool(ctx, cfg, r),
-    makeCheckpointTool(ctx, cfg, r),
-    makeClassifyTool(ctx, cfg, r),
-    makeSpawnLocalExecutorTool(ctx, cfg, r),
-    makeRegisterOutputTool(ctx, cfg, r),
-    makeSelftestTool(ctx, cfg, r),
-    makeAcceptMilestoneTool(ctx, cfg, r),
-    ...makeKnowledgeTools(ctx, cfg, r),
-  ]
-  // v93 — every tool call first re-homes the run state onto the SESSION workspace
-  // (idempotent; the profile-directory bootstrap is only a fallback, because the
-  // plugin process cwd is the DSH profile dir, never the user's project).
-  for (const t of tools) {
-    const aligned = {
+  // 3. Tool surface (v89: every L1 tool result carries the live run footer;
+  //    v103: each call is dispatched to the store of ITS workspace).
+  let footerR = null
+  for (const t of buildEntryTools(ctx, cfg, definitionR)) {
+    const registered = {
       ...t,
       execute: async (args, exec) => {
-        try { r.alignTo(ctx, exec) } catch { /* best-effort */ }
-        // v96 — remember the live L1 session so /pipeline/board can re-measure the
-        // context meter on every poll (not only after a pipeline_* tool call).
-        try {
-          const sess = resolveSession(ctx, exec)
-          if (sess) r.lastSession = sess
-        } catch { /* best-effort */ }
+        const entry = registry.resolve(exec)
+        if (!entry) {
+          throw new Error('pipeline: 无法定位工作区（当前 session 没有 cwd）。请在项目目录里发起对话，或先调 pipeline_lock_requirements。')
+        }
+        // v95/v103 — adopt the model the user actually picked for this chat and
+        // remember the live session for the board's L1 token meter.
+        entry.r.bindSession(ctx, exec)
         // v94 — keep the sidebar card's L1 sweet-spot reading fresh (tokenMeter,
         // deterministic, no LLM call; silently skipped when the meter is absent).
         try {
           const m = measureLevel1Context(ctx, exec, cfg)
           if (m && typeof m.totalTokens === 'number') {
-            r.store.context = { ...(r.store.context || {}), level1Tokens: m.totalTokens }
+            entry.r.store.context = { ...(entry.r.store.context || {}), level1Tokens: m.totalTokens }
           }
         } catch { /* best-effort */ }
-        return t.execute(args, exec)
+        const target = entry.tools.get(t.name)
+        if (!target || typeof target.execute !== 'function') {
+          throw new Error(`pipeline: ${t.name} 未在该工作区初始化`)
+        }
+        footerR = entry.r
+        return target.execute(args, exec)
       },
     }
-    ctx.tools.register(RUN_FOOTER_TOOLS.has(t.name) ? withRunFooter(aligned, r) : aligned)
+    ctx.tools.register(RUN_FOOTER_TOOLS.has(t.name) ? withRunFooter(registered, () => footerR) : registered)
   }
 
-  // Strict adjacency at the tool level.
-  // (a) L2/L3 must never reach L1-only tools — this replaces the removed
-  //     SubagentStartRequest.toolFilter (v84); see strictAdjacencyDenial.
-  // (b) The coordinator (L1) must NOT call Level-2 decompose or Level-3 execute
-  //     tools directly; it delegates via spawn/send of a module-lead subagent.
+  // Strict adjacency + role separation at the tool layer (v103). A caller whose
+  // tier cannot be established is refused for privileged tools (fail-closed), so
+  // a missing host service can no longer silently open the three tiers.
   ctx.tools.guard((execution) => {
-    const adjacency = strictAdjacencyDenial(ctx, r, execution)
+    const tier = registry.tierOf(execution)
+    const entry = registry.peek(execution)
+    const adjacency = strictAdjacencyDenial(tier, entry?.r, execution)
     if (adjacency) return adjacency
     // v89 hard gate: a finished-but-unaccepted milestone blocks every advancing tool.
-    if (ADVANCE_TOOLS.has(execution.name)) {
-      const pending = milestoneStates(r.store).filter((m) => m.state === 'done')
+    if (ADVANCE_TOOLS.has(execution.name) && entry) {
+      const pending = milestoneStates(entry.r.store).filter((m) => m.state === 'done')
       if (pending.length > 0) {
         return `有已完成未验收的里程碑：${pending.map((m) => m.name).join('、')}。先 ask_user_question 弹窗验收，再调用 pipeline_accept_milestone 记录；验收后才能继续推进。`
       }
     }
-    // v89 budget guard: execution tools are refused once the run hits a cap.
-    if (EXECUTION_TOOLS.has(execution.name)) {
-      const refusal = budgetRefusal(r, cfg)
-      if (refusal) return refusal
+    // v103 tier boundary: L1 delegates, it never runs L2/L3 work itself.
+    if (L2L3_TOOLS.has(execution.name) && tier === 'l1') {
+      return `${execution.name} 是二级/三级工具，一级协调者无权调用（已被守卫拦截）。请改用 pipeline_spawn_module_lead / pipeline_send_to_lead 委托二级模块负责人；不要重试本调用，重试仍会被拦截、浪费 token。`
     }
-    if (execution.name !== 'pipeline_decompose' && execution.name !== 'pipeline_execute_local' && execution.name !== 'pipeline_execute_batch' && execution.name !== 'pipeline_spawn_local_executor') return undefined
-    try {
-      const teams = ctx.get ? ctx.get('agentTeams') : undefined
-      if (teams && typeof teams.membership === 'function' && teams.membership(execution.agent)?.role === 'lead') {
-        return `${execution.name} 是二级/三级工具，一级协调者无权调用（已被守卫拦截）。请改用 pipeline_spawn_module_lead / pipeline_send_to_lead 委托二级模块负责人；不要重试本调用，重试仍会被拦截、浪费 token。`
+    // v89 budget guard + v103 real off switch: execution tools are refused once
+    // the run hits a cap or the user turned the pipeline off.
+    if (EXECUTION_TOOLS.has(execution.name)) {
+      if (tier === 'unknown') {
+        return '无法确认当前调用者的层级（agents.roots() 不可用）；已按 fail-closed 拒绝派发。请运行 /pipe-selftest 排查，并在项目主会话中重试。'
       }
-    } catch {
-      // subagent (not a team member) -> allow
+      if (String(cfg.mode) === 'off') {
+        return '三级流水线已关闭（mode=off）；用 /pipe-config mode auto 重新启用后再派发。'
+      }
+      if (entry) {
+        const refusal = budgetRefusal(entry.r, cfg)
+        if (refusal) return refusal
+      }
     }
     return undefined
   })
@@ -186,13 +222,15 @@ function apply(ctx, config) {
     name: 'pipe-stop',
     description: 'freeze the current run: no new L2/L3 dispatch (files already on disk are kept)',
     input: { hint: '冻结当前 run（无参数）' },
-    handler: () => {
-      const run = r.store.run
+    handler: (invocation) => {
+      const entry = registry.resolve(invocation)
+      if (!entry) return { kind: 'error', text: '无法定位当前工作区（session 没有 cwd）。' }
+      const run = entry.r.store.run
       if (!run || run.status === 'idle') return { kind: 'error', text: '当前没有活跃的 run。' }
       run.paused = true
       run.pauseReason = '用户手动冻结（/pipe-stop）'
       run.status = 'paused'
-      r.saveRun()
+      entry.r.saveRun()
       return { kind: 'success', text: '已冻结当前 run：新的 L2/L3 派发会被预算护栏拒绝；已派发的 L2 完成当前步骤后等待。已生成的文件保留。用 /pipe-resume 恢复。' }
     },
   })
@@ -201,13 +239,15 @@ function apply(ctx, config) {
     name: 'pipe-resume',
     description: 'resume a run that was frozen by /pipe-stop or by the budget guard',
     input: { hint: '恢复当前 run（无参数）' },
-    handler: () => {
-      const run = r.store.run
+    handler: (invocation) => {
+      const entry = registry.resolve(invocation)
+      if (!entry) return { kind: 'error', text: '无法定位当前工作区（session 没有 cwd）。' }
+      const run = entry.r.store.run
       if (!run) return { kind: 'error', text: '没有 run。' }
       run.paused = false
       run.pauseReason = null
       if (run.status === 'paused') run.status = 'active'
-      r.saveRun()
+      entry.r.saveRun()
       return { kind: 'success', text: '已恢复 run。' }
     },
   })
@@ -217,8 +257,10 @@ function apply(ctx, config) {
     description: 'open a structured research note (7 steps + anti-laziness rules) for a hard decision',
     input: { hint: '<议题，例如：下一步投哪条路径>' },
     handler: (invocation) => {
+      const entry = registry.resolve(invocation)
+      if (!entry) return { kind: 'error', text: '无法定位当前工作区（session 没有 cwd）。' }
       const topic = String(invocation.rawInput ?? '').trim() || 'untitled topic'
-      const dir = join(r.store.stateDir, 'knowledge', 'research')
+      const dir = join(entry.r.store.stateDir, 'knowledge', 'research')
       try { mkdirSync(dir, { recursive: true }) } catch { /* best-effort */ }
       const slug = topic.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'topic'
       const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`)
@@ -293,9 +335,10 @@ function apply(ctx, config) {
     name: 'pipe-selftest',
     description: 'DSH-compat health check (services + local engine)',
     input: { hint: '体检（无参数）' },
-    handler: async () => {
+    handler: async (invocation) => {
       try {
-        const result = await makeSelftestTool(ctx, cfg, r).execute({})
+        const entry = registry.peek(invocation)
+        const result = await makeSelftestTool(ctx, cfg, entry?.r ?? definitionR).execute({})
         const lines = result.checks.map((c) => `${c.ok ? '✅' : '❌'} ${c.name}：${c.detail}`)
         return { kind: result.ok ? 'success' : 'error', text: lines.join('\n') }
       } catch (err) {

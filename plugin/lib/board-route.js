@@ -4,7 +4,7 @@ import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v102'
+const BUILD_TAG = 'v103'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -149,7 +149,12 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
 // Register the read-only route; returns a disposer (no-op without webServer).
 // On a profile cold start apply() can run BEFORE webServer exists, so a missing
 // service must not mean "give up": inject on it, and fall back to 'ready'.
-export function installBoardRoute(ctx, r, cfg) {
+// v103 — `source` may be the workspace registry (per-workspace stores) or a
+// legacy single store; the handler never re-homes anything and always builds the
+// snapshot BEFORE writing the status line.
+export function installBoardRoute(ctx, source, cfg) {
+  const registry = source && typeof source.entryForRoute === 'function' ? source : null
+  const legacyR = registry ? null : source
   const register = (webServer) => {
     if (!webServer || typeof webServer.register !== 'function') return () => {}
     try {
@@ -158,21 +163,39 @@ export function installBoardRoute(ctx, r, cfg) {
         path: '/pipeline/board',
         handler: (req, res) => {
           try {
-            // Re-home the store onto the live session workspace, then adopt its board
-            // (otherwise the dashboard shows the empty daemon-cwd bootstrap store).
-            try {
-              if (typeof r?.alignTo === 'function') r.alignTo(ctx)
-            } catch {
-              // best-effort — fall through with the current stateDir
+            let r
+            let workspaceKey = null
+            if (registry) {
+              let qs = ''
+              try {
+                const u = String(req?.url ?? '')
+                const i = u.indexOf('?')
+                if (i >= 0) qs = u.slice(i + 1)
+              } catch { qs = '' }
+              const picked = registry.entryForRoute(qs)
+              if (!picked || picked.error || !picked.entry) {
+                res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+                res.end(JSON.stringify({ ok: false, error: picked?.error ?? 'no workspace state yet' }))
+                return
+              }
+              r = picked.entry.r
+              workspaceKey = picked.entry.key
+            } else {
+              r = legacyR
+            }
+            if (!r || !r.store) {
+              res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' })
+              res.end(JSON.stringify({ ok: false, error: 'no board store' }))
+              return
             }
             try {
-              if (r?.store && r.store.tasks.size === 0 && typeof r.reloadFromDisk === 'function') r.reloadFromDisk()
+              if (r.store.tasks.size === 0 && typeof r.reloadFromDisk === 'function') r.reloadFromDisk()
             } catch {
               // best-effort — fall through with the in-memory store
             }
             // Refresh the L1 reading on every poll (local meter, zero tokens).
             try {
-              const src = r?.lastSession ? { session: r.lastSession } : undefined
+              const src = r.lastSession ? { session: r.lastSession } : undefined
               const m = measureLevel1Context(ctx, src, cfg)
               if (m && typeof m.totalTokens === 'number') {
                 r.store.context = { ...(r.store.context || {}), level1Tokens: m.totalTokens }
@@ -180,17 +203,23 @@ export function installBoardRoute(ctx, r, cfg) {
             } catch {
               // best-effort — keep the cached reading
             }
-            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+            // v103 — build first: a throwing snapshot must not leave a 200 header
+            // already on the wire (ERR_HTTP_HEADERS_SENT).
             const snap = buildBoardSnapshot(r, cfg, (id) => measureAgentTokens(ctx, id))
             snap.debug = {
               build: BUILD_TAG,
+              workspace: workspaceKey,
               stateDir: r?.store?.stateDir ?? null,
               cwd: process.cwd(),
+              stores: registry ? registry.size() : 1,
             }
+            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
             res.end(JSON.stringify(snap))
           } catch (err) {
-            res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
-            res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) }))
+            try {
+              if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+            } catch { /* headers already sent */ }
+            try { res.end(JSON.stringify({ ok: false, error: String(err?.message ?? err) })) } catch { /* closed */ }
           }
         },
       })

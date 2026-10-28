@@ -17,8 +17,8 @@ import { extractDecisions } from '../knowledge/ledger.js'
 import { recall as recallHits } from '../knowledge/recall.js'
 
 const knowledgeDir = (r) => join(r?.store?.stateDir ?? process.cwd(), 'knowledge')
-const workspaceOf = (ctx, exec, args) =>
-  String(args?.root ?? '').trim() || resolveWorkspaceRoot(ctx, exec) || process.cwd()
+const workspaceOf = (ctx, exec, args, r) =>
+  String(args?.root ?? '').trim() || r?.store?.workspaceRoot || resolveWorkspaceRoot(ctx, exec) || process.cwd()
 
 const render = (_a, value) => text(JSON.stringify(value))
 
@@ -37,7 +37,7 @@ export function makeScanTool(ctx, cfg, r) {
     },
     output: { schema: { type: 'object', additionalProperties: true }, render },
     async execute(args, exec) {
-      const root = workspaceOf(ctx, exec, args)
+      const root = workspaceOf(ctx, exec, args, r)
       const outDir = knowledgeDir(r)
       if (args?.check === true) {
         const stale = checkStale({ root, outDir })
@@ -92,7 +92,7 @@ export function makeLedgerTool(ctx, cfg, r) {
     },
     output: { schema: { type: 'object', additionalProperties: true }, render },
     async execute(args, exec) {
-      const root = workspaceOf(ctx, exec, args)
+      const root = workspaceOf(ctx, exec, args, r)
       const outDir = knowledgeDir(r)
       const res = extractDecisions({ root, outDir })
       return {

@@ -9,11 +9,12 @@ import { milestoneStates, loadActivation, saveActivation, addRunUsage, storeToBo
 import { buildL2LeadPrompt } from '../prompts.js'
 import { measureLevel1Context, resolveWorkspaceRoot } from '../dsh-compat.js'
 
-// v92.1 — workspace root for resolving relative scopeDir paths. Session headers carry
-// the absolute session cwd; only when no session can be resolved do we fall back to
-// the daemon process cwd (which is the profile directory, never the project).
-function workspaceRoot(ctx, exec) {
-  return resolveWorkspaceRoot(ctx, exec) ?? process.cwd()
+// v92.1 — workspace root for resolving relative scopeDir paths. v103 — the
+// registry store carries the fixed workspace root, so prefer it; the session
+// header is only a fallback (and process.cwd() is the profile dir, never the
+// project).
+function workspaceRoot(ctx, exec, r) {
+  return (r && r.store && r.store.workspaceRoot) || resolveWorkspaceRoot(ctx, exec) || process.cwd()
 }
 
 // Resolve subagents or fail with an actionable diagnosis (never a bare "unavailable").
@@ -254,12 +255,12 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
       cleanupExpiredL2s(subs, exec.agent, r, cfg)
       let handoff = null
       if (args.resumeFrom) {
-        try { handoff = readFileSync(resolve(args.resumeFrom), 'utf8') } catch { /* missing handoff file is non-fatal */ }
+        try { handoff = readFileSync(resolve(workspaceRoot(ctx, exec, r), args.resumeFrom), 'utf8') } catch { /* missing handoff file is non-fatal */ }
       }
       // v92 — per-lead work directory (real cwd isolation between modules).
       const rawScope = typeof args.scopeDir === 'string' && args.scopeDir.trim() ? args.scopeDir.trim().replace(/\\/g, '/') : ''
       const scopeRel = rawScope || join('.dsh', 'pipeline', 'work', String(args.name ?? 'lead').replace(/[^a-zA-Z0-9._-]+/g, '_'))
-      const scopeAbs = resolve(workspaceRoot(ctx, exec), scopeRel)
+      const scopeAbs = resolve(workspaceRoot(ctx, exec, r), scopeRel)
       try { ensureDir(scopeAbs) } catch { /* best-effort: a lead can still write absolute paths */ }
       const promptText = buildL2LeadPrompt(args.prompt, args.acceptance, cfg, handoff, scopeRel)
       const promptTokens = estimateTokens(promptText)
@@ -294,6 +295,9 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
         estimatedTokens: promptTokens,
         scopeDir: scopeRel,
       })
+      // v103 — the L2 session's cwd is its scopeDir, not the project root; record
+      // the mapping so its pipeline_* calls land in this workspace's store.
+      try { r.bindChild?.(result.childId) } catch { /* best-effort */ }
       // Mark the old lead as replaced now; the real drain happens later via drain_leads.
       if (args.replacingChildId) {
         const old = r.store.agents.get(args.replacingChildId)
@@ -398,10 +402,12 @@ export function makeCheckpointTool(ctx, cfg, r) {
       },
     },
     output: jsonOutput(),
-    execute(args) {
+    execute(args, exec) {
       // Absolute paths: document + coldStartPrompt must work from another cwd.
-      const file = args.path ? resolve(args.path) : resolve(join(cfg.devDir, 'project_checkpoint.md'))
-      const handoffDir = join(resolve(cfg.devDir), 'team_board')
+      // v103 — default paths live under the calling WORKSPACE, never the daemon cwd.
+      const root = workspaceRoot(ctx, exec, r)
+      const file = args.path ? resolve(root, args.path) : resolve(join(root, cfg.devDir, 'project_checkpoint.md'))
+      const handoffDir = join(root, cfg.devDir, 'team_board')
       const agents = [...r.store.agents.values()]
       const lines = [
         '# 项目交接文档 (checkpoint)',

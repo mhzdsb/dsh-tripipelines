@@ -3,7 +3,7 @@
 import { existsSync, appendFileSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ensureDir } from './util.js'
-import { resolveWorkspaceRoot, resolveSessionModel } from './dsh-compat.js'
+import { resolveSession, resolveSessionModel } from './dsh-compat.js'
 
 // Runtime state directory (v83 / v93): board.json / requirement_lock.json /
 // trace-*.jsonl / the L3 exec scratch dir belong to the CURRENT WORKSPACE, so two
@@ -19,10 +19,14 @@ export function runtimeStateDir(root) {
 }
 
 export function createStore(cfg, opts = {}) {
-  const stateDir = runtimeStateDir()
+  // v103 — a store's state dir is fixed at creation from the workspace root the
+  // registry resolved. No later re-homing: a process-wide mutable stateDir is
+  // exactly what made two projects overwrite each other's board.
+  const stateDir = opts.root ? runtimeStateDir(opts.root) : runtimeStateDir()
   ensureDir(stateDir)
   const store = {
     stateDir,
+    workspaceRoot: opts.root ?? null,
     runId: null,
     requirement: null,
     locked: false,
@@ -50,20 +54,23 @@ export function createStore(cfg, opts = {}) {
     },
   }
 
-  // v93 — do NOT restore from the bootstrap stateDir here. At construction time
-  // the state dir is derived from process.cwd(), which is the daemon's own cwd
-  // (the profile dir), not the session workspace. Reading it would adopt a
-  // stale board from another workspace and then write it back over the real one.
-  // The first alignTo(ctx) re-homes the store and adopts the real workspace files.
-  // Tests / embedders that hand in an explicit state dir may opt back in with
-  // createStore(cfg, { restore: true }) — that is also the default for them.
+  // v103 — restore is safe now: the dir belongs to this workspace only, and the
+  // board maps are cleared first so a reload never merges two snapshots.
   if (opts.restore !== false) restoreFromDir(stateDir)
 
   // v89/v93 — cold-start recovery: the files are the truth. run.json carries the
   // control state machine, board.json the historical board, and
-  // requirement_lock.json the durable requirement lock (which survives a
-  // stateDir re-home). Idempotent, so it can run again after re-homing.
+  // requirement_lock.json the durable requirement lock.
   function restoreFromDir(dir) {
+    // v103 — files on disk are the truth for THIS workspace: clear before load so
+    // a repeated restore (or a fresh registry) can never keep a merged board.
+    store.tasks.clear()
+    store.subtasks.clear()
+    store.agents.clear()
+    store.messages.length = 0
+    store.requirement = null
+    store.locked = false
+    store.runId = null
     try {
       const runFile = join(dir, 'run.json')
       if (existsSync(runFile)) {
@@ -157,43 +164,9 @@ export function createStore(cfg, opts = {}) {
     return join(store.stateDir, 'run.json')
   }
 
-  // v93 — re-home the run onto the real workspace once the session is known.
-  // The profile-directory fallback is only a bootstrap; this is idempotent.
-  function setStateDir(dir) {
-    if (!dir || dir === store.stateDir) return false
-    const prev = store.stateDir
-    store.stateDir = dir
-    ensureDir(dir)
-    // Carry the requirement lock across the re-home: it is written by
-    // pipeline_lock_requirements into whichever dir was active at lock time.
-    try {
-      const from = join(prev, 'requirement_lock.json')
-      const to = join(dir, 'requirement_lock.json')
-      if (existsSync(from) && !existsSync(to)) {
-        writeFileSync(to, readFileSync(from, 'utf8'), 'utf8')
-        if (store.requirement == null) {
-          const lock = JSON.parse(readFileSync(to, 'utf8'))
-          if (lock && lock.requirement != null) {
-            store.requirement = lock.requirement
-            store.locked = true
-          }
-        }
-      }
-    } catch {
-      // best-effort migration
-    }
-    // Adopt the target workspace's board when it already has one: the files on
-    // disk are the truth, and the bootstrap dir may hold another workspace's run.
-    // restoreFromDir is a no-op when the target dir has no board.json.
-    restoreFromDir(dir)
-    saveRun()
-    snapshotBoard()
-    return true
-  }
-
-  function alignTo(ctx, source) {
-    // v95 — adopt the model the user actually picked for this chat (L1 is not a
-    // plugin setting). Kept on the store so the board can show the truth.
+  // v103 — bind the calling session to this (fixed) workspace store. Only the
+  // display model and the session handle change; the state dir never moves.
+  function bindSession(ctx, source) {
     try {
       const info = resolveSessionModel(ctx, source)
       if (info && info.model) {
@@ -204,8 +177,13 @@ export function createStore(cfg, opts = {}) {
     } catch {
       // best-effort; the board falls back to config
     }
-    const root = resolveWorkspaceRoot(ctx, source)
-    return root ? setStateDir(runtimeStateDir(root)) : false
+    try {
+      const sess = resolveSession(ctx, source)
+      if (sess) store.lastSession = sess
+    } catch {
+      // best-effort; token metering falls back to the config budget
+    }
+    return true
   }
 
   // v93 — the dashboard route has no session ctx to re-home with, so let it adopt
@@ -263,7 +241,7 @@ export function createStore(cfg, opts = {}) {
     return message
   }
 
-  return { store, record, tracePath, boardPath, stateDir, saveRun, setStateDir, alignTo, reloadFromDisk, snapshotBoard }
+  return { store, record, tracePath, boardPath, stateDir, saveRun, bindSession, reloadFromDisk, snapshotBoard }
 }
 
 export function storeToBoard(store) {
@@ -318,8 +296,15 @@ export function milestoneStates(store) {
 // else ''. Zero means unlimited.
 export function budgetRefusal(r, cfg) {
   const run = r.store.run
-  if (!run || run.status !== 'active') return ''
-  if (run.paused) return `run 已暂停（${run.pauseReason ?? '预算'}）；先 /pipe-resume 或 /pipe-stop`
+  if (!run || run.status === 'idle') return ''
+  // v103 — pause wins over the status field: /pipe-stop writes both, but a
+  // hand-edited or half-restored run.json may only carry one.
+  if (run.paused || run.status === 'paused') {
+    return `run 已暂停（${run.pauseReason ?? '手动'}）；先 /pipe-resume 或 /pipe-stop`
+  }
+  if (run.status !== 'active') {
+    return `run 状态为 ${run.status}，不能继续派发；先 /pipe-resume 或 /pipe-stop`
+  }
   if (Number(cfg.maxTotalTokensPerRun) > 0 && run.tokensUsed >= Number(cfg.maxTotalTokensPerRun)) {
     return `token 预算已用尽（${run.tokensUsed}/${cfg.maxTotalTokensPerRun}）；调 /pipe-config maxTotalTokensPerRun <值> 或 /pipe-stop`
   }
