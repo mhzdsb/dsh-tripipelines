@@ -1,0 +1,44 @@
+{
+  "name": "dsh-pipeline",
+  "version": "1.11.0",
+  "description": "Three-tier model collaboration plugin for DeepSeek Harness: L1 coordinator (any model the user picks) -> L2 (flash) module leads -> L3 (local engine) executors, with strict adjacency, long-lived L2, per-task acceptance, quality gates, per-workspace run state, per-module work directories, and a live GUI status board.",
+  "author": "merhentz",
+  "type": "module",
+  "main": "lib/plugin.js",
+  "exports": {
+    ".": {
+      "default": "./lib/plugin.js"
+    },
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "client.js",
+    "skills/",
+    "cordis.patch.yml",
+    "README.md",
+    "QUICKSTART.md",
+    "TUTORIAL.md",
+    "CHANGELOG.md",
+    "docs/",
+    "examples/"
+  ],
+  "scripts": {
+    "test": "node ../dev/smoke/verify-v82.mjs && node ../dev/smoke/v89_control_smoke.mjs && node ../dev/smoke/v90_tool_factory_probe.mjs && node ../dev/smoke/v92_board_smoke.mjs && node ../dev/smoke/skill_sync_check.mjs"
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

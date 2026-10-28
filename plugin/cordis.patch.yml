@@ -1,0 +1,4 @@
+# dsh-pipeline bundle patch (three-tier model collaboration plugin).
+- insert:
+    - id: pipeline
+      name: 'dsh-pipeline'

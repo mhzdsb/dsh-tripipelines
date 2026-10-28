@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# DSH runtime state (workspace-scoped pipeline state, logs, knowledge output)
+.dsh/
+
+# test residue produced by dev/smoke/v92 and friends
+plugin/.dsh/
+plugin/src/
+/src/
+
+# local backups and probes
+dev/_backup/
+dev/_probe*
+*.log
