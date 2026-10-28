@@ -13,7 +13,7 @@ import { createWorkspaceRegistry } from './workspaces.js'
 import { buildProtocolText, SKILL_BODY } from './prompts.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { installBoardRoute } from './board-route.js'
-import { RUN_FOOTER_TOOLS, withRunFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, L2L3_TOOLS, strictAdjacencyDenial } from './guards.js'
+import { RUN_FOOTER_TOOLS, withRunFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
 import { makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
 import { makeKnowledgeTools } from './tools/knowledge.js'
 import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeReviewTool, makeSpawnLocalExecutorTool, makeRegisterOutputTool } from './tools/l2l3.js'
@@ -174,10 +174,9 @@ function apply(ctx, config) {
         return `有已完成未验收的里程碑：${pending.map((m) => m.name).join('、')}。先 ask_user_question 弹窗验收，再调用 pipeline_accept_milestone 记录；验收后才能继续推进。`
       }
     }
-    // v103 tier boundary: L1 delegates, it never runs L2/L3 work itself.
-    if (L2L3_TOOLS.has(execution.name) && tier === 'l1') {
-      return `${execution.name} 是二级/三级工具，一级协调者无权调用（已被守卫拦截）。请改用 pipeline_spawn_module_lead / pipeline_send_to_lead 委托二级模块负责人；不要重试本调用，重试仍会被拦截、浪费 token。`
-    }
+    // v104: the role matrix (L1 vs L2/L3, advancing vs delegated tools) now
+    // lives in guards.strictAdjacencyDenial, so the same rules apply to every
+    // caller and are unit-tested directly.
     // v89 budget guard + v103 real off switch: execution tools are refused once
     // the run hits a cap or the user turned the pipeline off.
     if (EXECUTION_TOOLS.has(execution.name)) {

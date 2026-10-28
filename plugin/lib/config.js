@@ -70,6 +70,11 @@ export const DEFAULT_CONFIG = {
   maxDurationPerRun: 7200000,
   maxFilesPerRun: 200,
   level3Engine: 'auto',
+  // v104 — the acceptance gate executes model-written code. It stays on by
+  // default (the whole point is executable acceptance), but a site can turn it
+  // off: assertions then can never pass, so the gate fails closed instead of
+  // silently falling back to a keyword score.
+  allowCodeExecution: true,
 }
 
 // Editable config keys for the /pipe-config command. Each entry declares its
@@ -110,6 +115,7 @@ export const CONFIG_KEYS = {
   maxDurationPerRun: { type: 'number', desc: '单次 run 最大时长毫秒（超限自动暂停，0=不限）' },
   maxFilesPerRun: { type: 'number', desc: '单次 run 最多改动的文件数（超限自动暂停，0=不限）' },
   level3Engine: { type: 'enum', values: ['auto', 'ninfer', 'ollama', 'llamacpp', 'vllm', 'lmstudio', 'custom'], desc: '三级本地引擎提示（仅用于显示/探测/诊断，实际走 OpenAI 兼容接口）' },
+  allowCodeExecution: { type: 'boolean', desc: '质量门在宿主机执行验收断言（默认 true；关掉则含断言的验收一律不通过，不再回落关键词分）' },
 }
 
 export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')

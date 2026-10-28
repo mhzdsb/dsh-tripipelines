@@ -264,6 +264,23 @@ async function executeOneL3Task(subtask, cfg, r, exec) {
     return { ok: false, subtaskId: subtask.id, state: 'failed', cannotDo: true, reason: subtask.reason }
   }
 
+  // v104 — a non-object payload (null, a bare string, malformed JSON) is a
+  // failed subtask, not code="null" queued for review.
+  if (!parsed || typeof parsed !== 'object') {
+    subtask.failCount = (subtask.failCount ?? 0) + 1
+    const max = numCfg(cfg, 'maxLevel3Retries', 2)
+    subtask.reason = `local model returned a non-object payload: ${String(parsed).slice(0, 120)}`
+    if (subtask.failCount >= max) {
+      subtask.state = 'failed'
+      subtask.reason += ` (retried ${subtask.failCount}/${max}; escalate: Level-2 takes over, then Level-1)`
+      r.record('level3_local', 'failed', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.reason, subtask.acceptance)
+      return { ok: false, subtaskId: subtask.id, state: 'failed', escalated: true, failCount: subtask.failCount, reason: subtask.reason }
+    }
+    subtask.state = 'pending'
+    r.record('level3_local', 'failed', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.reason, subtask.acceptance)
+    return { ok: false, subtaskId: subtask.id, state: 'pending', retryable: true, failCount: subtask.failCount, reason: `${subtask.reason} (attempt ${subtask.failCount}/${max})` }
+  }
+
   r.store.counters.llmCalls += 1
   r.store.counters.tokensIn += usage.promptTokens ?? inTokens
   r.store.counters.tokensOut += usage.completionTokens ?? 0
@@ -273,7 +290,12 @@ async function executeOneL3Task(subtask, cfg, r, exec) {
   // v89 — feed the run budget (L3 tokens; L2 tokens are not observable here).
   addRunUsage(r, cfg, (usage.promptTokens ?? inTokens) + (usage.completionTokens ?? 0), [])
 
-  subtask.code = typeof parsed.code === 'string' ? parsed.code : JSON.stringify(parsed.code ?? parsed)
+  // v104 — keep the id the model echoed so the review gate can verify it; the
+  // board always carries OUR subtask id, never a self-certified copy of it.
+  subtask.l3SubtaskId = typeof parsed.subtask_id === 'string' ? parsed.subtask_id : null
+  subtask.code = typeof parsed.code === 'string'
+    ? parsed.code
+    : (parsed.code == null ? null : JSON.stringify(parsed.code))
   subtask.status = normalizeStatus(parsed.status)
   subtask.state = 'review'
   r.record('level3_local', 'review', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.status, subtask.acceptance)
@@ -399,7 +421,7 @@ export function makeReviewTool(ctx, cfg, r) {
         if (args.filePath) {
           try { code = readFileSync(wsPath(r, args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
         }
-        const gate = gateSubtask({ subtask_id: s.id, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
+        const gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
         if (gate.ok) {
           s.state = 'done'
           s.reason = null
@@ -464,7 +486,7 @@ export function makeReviewTool(ctx, cfg, r) {
         if (a.kind !== 'l3') throw new Error(`agent ${a.id} is ${a.kind}; only Level-3 executors can be reviewed`)
         if (a.state === 'in_progress') throw new Error(`agent ${a.id} is still in_progress`)
         const acceptance = a.acceptance ?? a.desc
-        const gate = gateSubtask({ subtask_id: a.id, code: a.code, status: a.status }, a.id, acceptance, cfg)
+        const gate = gateSubtask({ subtask_id: a.subtaskId ?? null, code: a.code, status: a.status }, a.subtaskId ?? null, acceptance, cfg, r.store.stateDir)
         a.state = gate.ok ? 'done' : 'failed'
         a.reason = gate.ok ? null : `quality gate failed: ${failedNames(gate)}`
         r.record(LEVEL2_NAMES[0], a.state, 'review_result', 'level1_main', a.id, a.desc, a.reason ?? 'accepted', acceptance)

@@ -104,9 +104,19 @@ export const EXECUTION_TOOLS = new Set([
   'pipeline_spawn_local_executor',
 ])
 
-// v103 — tier: 'l1' | 'l2' | 'l3' | 'child' | 'unknown'.
+// v103/v104 — tier: 'l1' | 'l2' | 'l3' | 'child' | 'unknown'. The role matrix is
+// enforced here (not in a prompt): L1 delegates and never executes L2/L3 tools;
+// only L1 may advance the graph (spawn/send); L1-only tools are refused for every
+// child; an unattributable caller is refused (fail-closed).
 export function strictAdjacencyDenial(tier, r, execution) {
-  if (!execution || !L1_ONLY_TOOLS.has(execution.name)) return undefined
+  if (!execution) return undefined
+  if (L2L3_TOOLS.has(execution.name) && tier === 'l1') {
+    return `${execution.name} 是二级/三级工具，一级协调者必须委派，禁止自己执行（已被守卫拦截；不要重试）。请改用 pipeline_spawn_module_lead / pipeline_send_to_lead。`
+  }
+  if (ADVANCE_TOOLS.has(execution.name) && tier !== 'l1') {
+    return `${execution.name} 只能由一级协调者调用；${String(tier ?? 'unknown').toUpperCase()} 不能自行派发或改写任务图（不要重试）。`
+  }
+  if (!L1_ONLY_TOOLS.has(execution.name)) return undefined
   if (tier === 'l1') return undefined
   if (tier === 'l2' || tier === 'l3' || tier === 'child') {
     return `${execution.name} 是一级协调者（L1）专用工具；${String(tier).toUpperCase()} 只能使用本层相邻工具，严格相邻不允许越级（不要重试）。`
