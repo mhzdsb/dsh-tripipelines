@@ -74,14 +74,16 @@ window.__ModuleLoader__.load({
           try {
             const res = await fetch('/pipeline/board', { cache: 'no-store' })
             if (!alive) return
-            if (!res.ok) {
-              setSnap(null)
-            } else {
+            // v106: keep the last good snapshot on a failed poll. A cold daemon with no
+            // workspace store yet used to answer 404 here, and nulling the snapshot made
+            // the whole sidebar card vanish; the server now answers idle, and a transient
+            // error must never erase what we already showed.
+            if (res.ok) {
               const data = await res.json()
-              setSnap(data && data.ok ? data : null)
+              if (data && data.ok) setSnap(data)
             }
           } catch {
-            if (alive) setSnap(null)
+            /* keep the last snapshot */
           }
           schedule()
         }

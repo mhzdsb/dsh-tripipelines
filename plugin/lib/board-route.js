@@ -4,7 +4,7 @@ import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v105'
+const BUILD_TAG = 'v106'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -146,6 +146,63 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
   }
 }
 
+// v106 — a fresh daemon (or a workspace that has not called any pipeline_* tool
+// yet) has no store at all. The GUI card polls every 2.5s, so answering 404 here
+// made the whole card vanish after every restart. Return a normal "idle" payload
+// instead; the client renders its muted 待命 state and the card stays in place.
+export function idleBoardSnapshot(cfg, stores) {
+  const num = (v) => Number(v) || 0
+  return {
+    ok: true,
+    updatedAt: new Date().toISOString(),
+    run: {
+      id: null,
+      status: 'idle',
+      paused: false,
+      pauseReason: null,
+      startedAt: null,
+      activation: 'unknown',
+      requirement: null,
+    },
+    milestones: [],
+    tasks: [],
+    agents: [],
+    subtasks: { total: 0, done: 0, failed: 0 },
+    budget: {
+      tokensUsed: 0,
+      maxTokens: numCfg(cfg, 'maxTotalTokensPerRun', 0),
+      maxDurationMs: numCfg(cfg, 'maxDurationPerRun', 0),
+      maxFiles: numCfg(cfg, 'maxFilesPerRun', 0),
+      filesTouched: 0,
+    },
+    counters: { l2Spawns: 0, l2Sends: 0, l3Calls: 0, tokensIn: 0, tokensOut: 0 },
+    context: {
+      models: { level1: cfg?.level1Model || '', level2: cfg?.level2Model ?? '' },
+      level1: {
+        tokens: 0,
+        budget: num(cfg?.level1ContextBudget),
+        danger: num(cfg?.level1DangerBudget),
+        window: num(cfg?.level1ContextWindow),
+      },
+      level2: {
+        tokens: 0,
+        budget: num(cfg?.level2ContextBudget),
+        danger: num(cfg?.level2DangerBudget),
+        window: num(cfg?.level2ContextWindow),
+      },
+    },
+    recentEvents: [],
+    debug: {
+      build: BUILD_TAG,
+      workspace: null,
+      stateDir: null,
+      cwd: process.cwd(),
+      stores: Number(stores) || 0,
+      idle: true,
+    },
+  }
+}
+
 // Register the read-only route; returns a disposer (no-op without webServer).
 // On a profile cold start apply() can run BEFORE webServer exists, so a missing
 // service must not mean "give up": inject on it, and fall back to 'ready'.
@@ -173,6 +230,12 @@ export function installBoardRoute(ctx, source, cfg) {
                 if (i >= 0) qs = u.slice(i + 1)
               } catch { qs = '' }
               const picked = registry.entryForRoute(qs)
+              if (picked && picked.idle) {
+                const snap = idleBoardSnapshot(cfg, registry.size())
+                res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+                res.end(JSON.stringify(snap))
+                return
+              }
               if (!picked || picked.error || !picked.entry) {
                 res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
                 res.end(JSON.stringify({ ok: false, error: picked?.error ?? 'no workspace state yet' }))

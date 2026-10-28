@@ -225,6 +225,13 @@ try {
   section('cold start restores per workspace')
   const h2 = makeCtx({ sessions, roots: [{ id: 'a1' }, { id: 'b1' }] })
   apply(h2.ctx, { mode: 'auto' })
+  // v106: before any tool call this registry has no store at all; the board must
+  // answer an idle 200 (the GUI card would otherwise vanish after every restart).
+  const resIdle = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
+  routes[routes.length - 1].handler({ url: '/pipeline/board' }, resIdle)
+  const idleSnap = resIdle.statusCode === 200 ? JSON.parse(resIdle.body) : null
+  check('cold board without state answers 200 idle', resIdle.statusCode === 200 && idleSnap?.ok === true && idleSnap?.run?.status === 'idle', `status ${resIdle.statusCode}`)
+  check('idle snapshot is marked idle in debug', idleSnap?.debug?.idle === true && idleSnap?.debug?.stores === 0, JSON.stringify(idleSnap?.debug))
   const coldA = await statusOf(h2, 'a1')
   check('cold start restores A lock', coldA.run_id === lock.run_id && coldA.locked === true, JSON.stringify({ run: coldA.run_id, locked: coldA.locked }))
   check('cold start keeps B empty', !existsSync(bLockFile))

@@ -159,6 +159,10 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
     if (lastActiveKey && entries.has(lastActiveKey)) return { entry: entries.get(lastActiveKey) }
     const all = [...entries.values()]
     if (all.length === 1) return { entry: all[0] }
+    // v106: a daemon that just restarted has no store for any workspace yet. That
+    // is an empty state, not an error — the GUI card must stay visible. Callers
+    // render an idle snapshot for it.
+    if (all.length === 0) return { idle: true }
     return { error: 'no active workspace yet — call any pipeline_* tool first' }
   }
 
