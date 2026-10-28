@@ -92,11 +92,19 @@ function verifySnapshot(snapshotDir, label) {
 }
 
 if (verifyOnly) {
-  const snaps = existsSync(snapshotsRoot)
-    ? readdirSync(snapshotsRoot).filter((n) => /^dsh-pipeline-v\d+[a-z]?$/.test(n)).map((n) => join(snapshotsRoot, n))
+  const all = existsSync(snapshotsRoot)
+    ? readdirSync(snapshotsRoot).filter((n) => /^dsh-pipeline-v\d+[a-z]?$/.test(n))
+      .map((n) => ({ name: n, num: Number((n.match(/v(\d+)/) ?? [])[1] ?? 0) }))
+      .sort((a, b) => a.num - b.num)
     : []
-  if (!snaps.length) fail('no dsh-pipeline-v* snapshot under ~/.dsh')
-  for (const s of snaps) verifySnapshot(s, s.split(/[\\/]/).pop())
+  if (!all.length) fail('no dsh-pipeline-v* snapshot under ~/.dsh')
+  if (all.length > 1) {
+    console.log(`note: ${all.length} snapshots found; verifying only the newest (${all.at(-1).name}).`)
+    console.log('      older snapshots are historical and intentionally differ from source.')
+    console.log('')
+  }
+  const newest = all.at(-1)
+  if (newest) verifySnapshot(join(snapshotsRoot, newest.name), newest.name)
   console.log('')
   console.log(problems.length ? `${problems.length} problem(s) — do NOT reinstall yet.` : 'snapshot verification clean.')
   process.exit(problems.length ? 1 : 0)
