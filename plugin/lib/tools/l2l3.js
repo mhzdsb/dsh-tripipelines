@@ -44,7 +44,8 @@ async function decomposeViaLlm(ctx, cfg, task, signal) {
   if (!Array.isArray(parsed)) throw new Error('Level-2 model returned a non-array')
   const subs = parsed.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
   if (subs.length === 0) throw new Error('Level-2 model returned no subtasks')
-  return subs
+  // v105 — account for the L2 decomposition call (it used to be invisible in the run ledger).
+  return { subs, tokens: estimateTokens(prompt) + estimateTokens(text) }
 }
 
 export function makeDecomposeTool(ctx, cfg, r) {
@@ -85,8 +86,13 @@ export function makeDecomposeTool(ctx, cfg, r) {
       let chunks
       let via
       try {
-        chunks = await decomposeViaLlm(ctx, cfg, task, exec.signal)
+        const result = await decomposeViaLlm(ctx, cfg, task, exec.signal)
+        chunks = result.subs
         via = 'llm'
+        if (result.tokens > 0) {
+          addRunUsage(r, cfg, result.tokens, [])
+          r.store.counters.l2Decompose = (r.store.counters.l2Decompose ?? 0) + 1
+        }
       } catch {
         chunks = splitIntoChunks(task.desc, cfg.level3InputBudget)
         via = 'deterministic'
@@ -633,6 +639,8 @@ export function makeRegisterOutputTool(ctx, cfg, r) {
       if (args.filePath) s.filePath = wsPath(r, args.filePath)
       s.status = 'done'
       s.state = 'review'
+      // v105 — a takeover that lands code on disk counts toward maxFilesPerRun.
+      if (s.filePath) addRunUsage(r, cfg, 0, [s.filePath])
       r.record(LEVEL2_NAMES[0], 'review', 'task_result', 'level1_main', s.id, s.desc, 'done (L2 takeover)', s.acceptance)
       return { subtaskId: s.id, state: s.state, registered: true }
     },

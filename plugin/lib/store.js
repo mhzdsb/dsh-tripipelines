@@ -121,6 +121,9 @@ export function createStore(cfg, opts = {}) {
           }
           if (saved.requirement != null) store.requirement = saved.requirement
           if (typeof saved.locked === 'boolean') store.locked = saved.locked
+          if (saved.counters && typeof saved.counters === 'object') {
+            store.counters = { ...store.counters, ...saved.counters }
+          }
           for (const s of store.subtasks.values()) {
             const t = store.tasks.get(s.parent)
             if (t && !t.subtaskIds.includes(s.id)) t.subtaskIds.push(s.id)

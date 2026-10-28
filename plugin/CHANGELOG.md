@@ -2,6 +2,20 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（`dsh-pipeline-vN`），版本号即迭代序号。
 
+## v105 — 1.14.0（批次 D–E：发布校验 + 生命周期闭合）
+
+### 发布与文档（D）
+- `dev/release.mjs`：先跑全部检查再复制快照（失败不再覆盖）；CHANGELOG 标题的 tag 与版本必须同时匹配；`BUILD_TAG` 必须等于发布 tag；`--dry` 明确打印不写快照。
+- `package.json` 版本 1.14.0、test 串起全部 10 套；`BUILD_TAG='v105'`；新增 MIT `LICENSE`。
+- README/TUTORIAL/QUICKSTART/设计文档按实现校正（断言语言、产物路径、checkpoint 节数、端点默认空、安装命令）。
+
+### 生命周期（E）
+- `pipeline_plan`：重 plan 保留已完成任务状态与已验收里程碑；存在「done 但未验收」里程碑时默认拒绝，需显式 `reset:true`。
+- `pipeline_accept_milestone`：必须传 `userConfirmed:true`（用户对话中确实验收过），否则拒绝。
+- `pipeline_drain_leads`：`drainChildren` 失败不再吞掉——相关 L2 标 `failed`、写 trace、返回 `ok:false`；成功返回 `ok:true`。
+- `pipeline_spawn_module_lead`：同名模块按 `maxLevel2Retries` 限制重派发次数，超出时要求 L1 自己接手或向用户报 cannot-do。
+- 账目：L2 分解调用计入 `tokensUsed` 与 `l2Decompose`；L2 接手写盘的文件计入 `filesTouched`；`counters` 随 board.json 冷恢复。
+
 ## v104 — 1.13.0（批次 A–C：工作区隔离 · fail-closed 质量门 · 反轮询与配置/秘密硬化）
 
 > 说明：v103/v104 是 v102 评审后的三个修复批次（A 隔离、B 门与角色、C 反轮询/配置/秘密），版本号合并为本条 1.13.0。

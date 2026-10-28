@@ -130,6 +130,7 @@ export function makePlanTool(ctx, cfg, r) {
             },
           },
         },
+        reset: { type: 'boolean', description: 'Allow re-planning over a done-but-unaccepted milestone (drops that acceptance gate).' },
       },
     },
     output: jsonOutput(),
@@ -139,6 +140,7 @@ export function makePlanTool(ctx, cfg, r) {
       }
       const tasks = validateTaskPlan(args.taskPlan)
       for (const t of tasks) {
+        const prevTask = r.store.tasks.get(t.id)
         r.store.tasks.set(t.id, {
           id: t.id,
           desc: t.desc.trim(),
@@ -146,15 +148,17 @@ export function makePlanTool(ctx, cfg, r) {
           deadline: t.deadline ?? null,
           acceptance: t.acceptance.trim(),
           depends_on: t.depends_on ?? [],
-          state: 'pending',
-          reason: null,
-          subtaskIds: [],
+          // v104 — re-planning must not silently reopen finished work.
+          state: prevTask?.state ?? 'pending',
+          reason: prevTask?.reason ?? null,
+          subtaskIds: prevTask?.subtaskIds ?? [],
         })
         r.record('level1_main', 'pending', 'task_assignment', t.assignee ?? LEVEL2_NAMES[0], t.id, t.desc, null, t.acceptance)
       }
       // v89 — acceptance milestones (state is computed lazily from task states).
       const rawMilestones = Array.isArray(args.taskPlan?.milestones) ? args.taskPlan.milestones : []
-      r.store.run.milestones = rawMilestones
+      const prior = new Map((r.store.run.milestones ?? []).map((m) => [m.id, m]))
+      const nextMilestones = rawMilestones
         .map((m, i) => ({
           id: String(m?.id ?? `m${i + 1}`),
           name: String(m?.name ?? m?.id ?? `milestone ${i + 1}`),
@@ -162,10 +166,29 @@ export function makePlanTool(ctx, cfg, r) {
           state: 'pending',
         }))
         .filter((m) => m.taskIds.length > 0)
+      // v104 — a done-but-unaccepted milestone must not be silently erased by a
+      // re-plan; require an explicit reset, and carry accepted state forward.
+      const doneUnaccepted = [...prior.values()].filter((m) => {
+        if (m.state === 'accepted') return false
+        const st = milestoneStates(r.store).find((x) => x.id === m.id)
+        return st && st.state === 'done'
+      })
+      if (doneUnaccepted.length > 0 && args.reset !== true) {
+        throw new Error(`里程碑 ${doneUnaccepted.map((m) => m.id).join(', ')} 已完成但未验收；先 pipeline_accept_milestone 验收，或显式传 reset:true 放弃该验收门`)
+      }
+      for (const m of nextMilestones) {
+        const old = prior.get(m.id)
+        if (old?.state === 'accepted') {
+          m.state = 'accepted'
+          m.acceptedAt = old.acceptedAt ?? null
+          m.note = old.note ?? null
+        }
+      }
+      r.store.run.milestones = nextMilestones
       r.saveRun()
       // v96 — module-count nudge (soft, never blocks): a large plan collapsed into 1-2 leads.
       const assignees = [...new Set(tasks.map((t) => (t.assignee ?? LEVEL2_NAMES[0]).trim()))]
-      const bigRequirement = String(r.store.requirement?.text ?? '').length >= 600
+      const bigRequirement = String(r.store.requirement ?? '').length >= 600
       let planHint = null
       if (assignees.length === 1 && tasks.length >= 3) {
         planHint = `MODULE COUNT: ${tasks.length} tasks but 1 module (${assignees[0]}). If they touch independent concerns, re-plan with more L2s (≥3 concerns → ≥3 leads).`
@@ -252,6 +275,19 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
     output: jsonOutput(),
     async execute(args, exec) {
       const subs = requireSubagents(ctx, 'startActivation', 'spawn')
+      // v105 — bound re-dispatch per module: maxLevel2Retries was documented in the L2
+      // prompt ("at most N attempts per task") but never enforced. Count spawns per
+      // module name in the run and refuse to re-spawn past the budget.
+      const retryCap = numCfg(cfg, 'maxLevel2Retries', 3)
+      const attemptKey = String(args.name ?? '').trim()
+      const spawnCounts = (r.store.run.spawnCounts ??= {})
+      if (attemptKey && (spawnCounts[attemptKey] ?? 0) >= retryCap) {
+        throw new Error(`模块 ${attemptKey} 已派发 ${spawnCounts[attemptKey]} 次，达到 maxLevel2Retries=${retryCap}；请自己接手、或向用户报告 cannot-do，不要再起同类 L2。`)
+      }
+      if (attemptKey) {
+        spawnCounts[attemptKey] = (spawnCounts[attemptKey] ?? 0) + 1
+        r.saveRun()
+      }
       // Module-lead cap.
       const liveL2 = [...r.store.agents.values()].filter((a) => a.kind === 'l2' && a.state !== 'done' && a.state !== 'replaced')
       const cap = numCfg(cfg, 'maxLevel2Agents', 10)
@@ -385,12 +421,24 @@ export function makeDrainLeadsTool(ctx, cfg, r) {
     async execute(args, exec) {
       const subs = requireSubagents(ctx, 'drainChildren', 'drain')
       const ids = (args.childIds ?? []).filter((x) => typeof x === 'string' && x)
-      try { await subs.drainChildren(exec.agent, ids) } catch { /* best-effort */ }
+      try {
+        await subs.drainChildren(exec.agent, ids)
+      } catch (e) {
+        // v104 — a failed drain is a real failure: do not report ids as drained and
+        // do not flip the board to done.
+        const message = String(e?.message ?? e)
+        for (const id of ids) {
+          const a = r.store.agents.get(id)
+          if (a) { a.state = 'failed'; a.reason = `drain failed: ${message}` }
+        }
+        r.record('level1_main', 'failed', 'agent_drain', null, null, message, null, null)
+        return { ok: false, drained: [], requested: ids, error: message }
+      }
       for (const id of ids) {
         const a = r.store.agents.get(id)
         if (a) a.state = 'done'
       }
-      return { drained: ids }
+      return { ok: true, drained: ids }
     },
   }
 }
@@ -574,14 +622,19 @@ export function makeAcceptMilestoneTool(ctx, cfg, r) {
     parameters: {
       type: 'object',
       additionalProperties: false,
-      required: ['milestoneId'],
+      required: ['milestoneId', 'userConfirmed'],
       properties: {
         milestoneId: { type: 'string', description: 'Milestone id.' },
+        userConfirmed: { type: 'boolean', description: 'True only after the user actually accepted this milestone in chat (ask_user_question).' },
         note: { type: 'string', description: 'Optional note.' },
       },
     },
     output: jsonOutput(),
     execute(args) {
+      // v104 — acceptance is a user act, not an L1 self-certification.
+      if (args.userConfirmed !== true) {
+        throw new Error('pipeline_accept_milestone 需要 userConfirmed:true，且只能在用户于对话中明确验收后调用（先 ask_user_question 确认）')
+      }
       const ms = r.store.run?.milestones ?? []
       const m = ms.find((x) => x.id === args.milestoneId)
       if (!m) throw new Error(`unknown milestone id: ${args.milestoneId}`)
