@@ -2,6 +2,28 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（`dsh-pipeline-vN`），版本号即迭代序号。
 
+## v104 — 1.13.0（批次 A–C：工作区隔离 · fail-closed 质量门 · 反轮询与配置/秘密硬化）
+
+> 说明：v103/v104 是 v102 评审后的三个修复批次（A 隔离、B 门与角色、C 反轮询/配置/秘密），版本号合并为本条 1.13.0。
+
+### A. 工作区隔离（P0）
+- 新增 `lib/workspaces.js`：按规范化 workspace root 惰性建 store 注册表；`keyFor` 依次用子会话映射（spawn 后 bindChild）→ session `header.cwd` → 上溯 `.git`/`.dsh/pipeline`；不再有进程级 `store.stateDir` 漂移。
+- `store.js`：`createStore(cfg,{root})` 固定 stateDir；删除 `setStateDir` 与 requirement_lock 复制；冷恢复先清空再读盘；`alignTo` 改名 `bindSession`，只更新模型与会话。
+- `plugin.js`：工具注册一次、按工作区分发；命令按 invocation 解析工作区；`board-route.js` 支持 `?workspace=` 且默认 lastActive，先建快照再写响应头。
+- 工具结果页脚修复：数组型 render 现在会追加运行状态页脚（此前永不显示）。
+
+### B. 质量门与角色（P0）
+- `gates.js`：断言优先且 fail-closed——JS（node）与 Python（ast 静态安全门 + 子进程）都真执行；`ran:false` 一律失败，不再回落关键词分；同一子任务的全部断言必须通过；`subtask_id` 做真实比对；`gateTask` 不再有恒真检查。
+- 语义分封顶 0.5，关键词不再能“猜过”质量门。
+- `allowCodeExecution`（默认 true）：关掉后任何含断言的验收直接失败。
+- 角色矩阵集中在 `guards.js`：L1 不得直接执行 L2/L3 工具、L2/L3 不得派发、无法归因时 fail-closed。
+
+### C. 反轮询、配置与秘密（P0/P1）
+- 反轮询：常驻协议补「goal 自动续轮唤醒时也要结束回合」；spawn/send 工具成功后调用 `concludeTurn()`；`pipeline_status` 在有 L2 进行中时返回 `waitingFor` 与等待提示。
+- 配置只写显式键（不再把合并后的全量配置写回全局）；`level3Endpoint` 默认空并要求显式配置，新增 `level3Provider`/`spawnProvider`，`level3InputBudget` 默认 1200；配置值校验（比例/预算/超时/端点）。
+- 秘密硬化：`redact()` 统一到 `util.js`，checkpoint 摘录、模块页、ledger 候选、recall 输出全部脱敏；`recall` 拒绝 `..`/绝对路径/目录穿越。
+- 测试：`pnpm test` 现在串起全部 9 套（含 v98/v99/v103/v104）；v82 默认值断言改为固定口径；v99 增加 checkpoint 脱敏与 recall 围栏用例。
+
 ## v102 — 1.11.0（版本号与安装对齐，用户侧可见）
 
 > 说明：1.10.x 系列是内部发版号，用户侧界面显示的版本号本次统一为 1.11.0；本条目汇总 v102 的全部改动，更早的 1.10.x 细节见下方 v101d/v101c/v101b 条目。

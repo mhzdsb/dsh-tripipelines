@@ -96,6 +96,7 @@ try {
   check('blocked code fails closed (no semantic rescue)', blockedGate.ok === false)
   const noAssert = gateSubtask({ subtask_id: 's6', code: 'function add(a,b){return a+b}', status: 'done' }, 's6', 'looks nice', cfg, baseDir)
   check('no-assertion acceptance still uses the semantic score', noAssert.checks.some((c) => /semantic-score/.test(c.name)), JSON.stringify(noAssert.checks))
+  check('semantic fallback is capped below the default gate', noAssert.ok === false && Number(noAssert.score) <= 0.5, `${noAssert.score}`)
 
   section('task gate')
   const task = { id: 't1', acceptance: 'add(2,3)===5' }

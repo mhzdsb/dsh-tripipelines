@@ -112,7 +112,7 @@ Phase 0 引导开机 ──▶ Phase 1 需求访谈 ──▶ Phase 2 适配性�
 - **统一 trace**：工具式路径（task_assignment/task_result/review_result）和 agent 式路径（agent_spawn/agent_send/agent_spawn_l3/agent_l3_result）都写同一条 `trace-<run_id>.jsonl`。
 - **board 生命周期**：`agents` 集合记录 L2/L3 的 `in_progress → done/failed`；L3 的 code/status 解析后回填。
 - **看板是给 L1 终审的全局快照**，不是给 L2 追踪进度的（L2 靠派发工具的同步返回值）。
-- **状态按工作区隔离（v83）**：`board.json` / `requirement_lock.json` / `trace-*.jsonl` / L3 断言执行目录统一落在运行时状态目录 `runtimeStateDir()` = `<process.cwd()>/.dsh/pipeline`；多项目并行各自锁需求、各自看板，互不覆盖。`config.json` 仍全局唯一（`~/.dsh/pipeline/config.json`），项目级覆盖仍走 `<devDir>/pipeline-project.json`。
+- **状态按工作区隔离（v103）**：每个规范化 workspace root 一个独立 store（`lib/workspaces.js` 注册表），`board.json` / `requirement_lock.json` / `trace-*.jsonl` / L3 断言执行目录落在该工作区的 `<root>/.dsh/pipeline`；不存在进程级可漂移的 stateDir，也从不把 A 工作区的 requirement_lock 复制给 B。`config.json` 仍全局唯一（`~/.dsh/pipeline/config.json`），项目级覆盖仍走 `<devDir>/pipeline-project.json`。
 - **成本分账**：`counters` 按层记录 `l2Spawns`/`l2Sends`（二级）与 `l3Calls`/`l3TokensIn`/`l3TokensOut`（本地模型精确 token），`pipeline_status` 展示。
 - **文件真相**：`pipeline_review`/`pipeline_register_output` 支持 `filePath`，评审可读磁盘真实文件而非看板投影代码。
 
@@ -122,7 +122,7 @@ Phase 0 引导开机 ──▶ Phase 1 需求访谈 ──▶ Phase 2 适配性�
 
 1. **禁止轮询**：L1 等 push 汇报（只在终审查板）；L2 被 deny `pipeline_status`（靠工具返回值）。
 2. **按异常汇报**：正常进度不打扰上级。
-3. **系统提示词压缩**：只留 5 句核心（三级角色、工具边界、禁止轮询、模式+重试+阈值、纪律）。
+3. **系统提示词压缩**：常驻协议只留核心几句（三级角色、工具边界、禁止轮询、模式+重试+阈值、纪律），完整流程在按需加载的 SKILL 里。
 4. **工具 description 精简**：每个一句话。
 5. **分层提示词**：L2 只背局部协议，L3 只背「完成一个任务、返回 JSON」，不背整棵树。
 6. **L3 轻量工具路径**：单次 HTTP，不 spawn 重 subagent。

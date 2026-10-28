@@ -48,14 +48,14 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 | `pipeline_spawn_module_lead` | L1→L2 | 生成长活 flash 二级（continuable subagent） |
 | `pipeline_send_to_lead` | L1↔L2 | 复用长活二级发后续任务（不重开） |
 | `pipeline_drain_leads` | L1 | 里程碑重建后释放一批旧二级 |
-| `pipeline_checkpoint` | L1 | 写项目交接文档（9 节契约）+ 冷启动 prompt |
+| `pipeline_checkpoint` | L1 | 写项目交接文档（10 节契约）+ 冷启动 prompt |
 | `pipeline_accept_milestone` | L1 | 记录里程碑用户验收（全部任务 done 后置 accepted） |
 | `pipeline_selftest` | L1 | 健康检查：subagents API / llm / L3 引擎 `/v1/models` |
 | `pipeline_decompose` | L2 | 把单个任务拆成极简子任务（≤200 token / ≤10 行） |
 | `pipeline_spawn_local_executor` | L2→L3 | 生成一次性三级执行器（provider 取 `level2Provider`，agent 式重路径） |
 | `pipeline_execute_local` | L3 | 在本地引擎上执行**一个**子任务（L1 压缩，文本进→JSON 出，失败计数） |
 | `pipeline_execute_batch` | L2→L3 | 一次提交 N 个子任务，工具内部**串行**执行并一次返回（每任务独立 15 分钟看门狗，失败不连锁；`maxBatchMs` 可选护栏只停派新任务） |
-| `pipeline_review` | L2/L1 | 质量门控审核（JSON 校验 + DoD + 语义评分 ≥ 0.7；可传 `filePath` 读真实文件） |
+| `pipeline_review` | L2/L1 | 质量门控审核（断言执行 fail-closed + JSON 校验 + 语义评分兜底；可传 `filePath` 读真实文件） |
 | `pipeline_register_output` | L2 | L2 接管直写盘后，把代码回填看板（可传 `filePath`） |
 | `pipeline_classify` | L1 | 能力匹配分类器（工具需求/规模/可验证性/架构 → L1/L2/L3） |
 | `pipeline_scan` | L1 | 机械扫描仓库 → 知识库 `index.md` + `map.json`（+ 每模块一页）；`check:true` 只报陈旧 |
@@ -71,15 +71,15 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 
 ## 2. 安装
 
-### 2.1 桌面端（当前运行的应用，已装好）
+### 2.1 桌面端（当前运行的应用）
 
-已安装并激活，包名为 `dsh-pipeline`。直接跳到第 4 节使用。
+本仓库的发布脚本会把 `plugin/` 复制为 `~/.dsh/dsh-pipeline-vNN` 快照再安装；实际装的是哪个版本，以插件管理器 `list_plugins` 的显示为准（版本号见 `package.json`）。已装好就跳到第 4 节；升级见第 7 节。
 
 > 说明：包名带 `-vN` 后缀是为了绕过 Electron 进程的模块缓存——**每次改代码都要复制到新目录、把包名 `-vN` 加 1、再重装**（install 新版 → remove 旧版 → 对新版 enable/disable 一次）。只改目录不改包名，DSH 仍会加载旧缓存。
 
 ### 2.2 Web 配置档（CLI 启动的 `dsh web`）
 
-已通过 junction + patch 装入 `web` 配置档。如需在新机器上复现，两种方式：
+桌面端默认不带 Web 档的安装。若要在 `dsh web` 里使用，任选一种方式：
 
 ```bash
 # 方式 A：官方插件管理器（需要 pnpm 在 PATH）
@@ -92,6 +92,8 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 #        - id: pipeline
 #          name: 'dsh-pipeline'
 ```
+
+> 装好后用 web 档新开会话，`listTools` 里应出现 `pipeline_*`；若没有，确认 `profiles/web/cordis.patch.yml` 里确实有 `pipeline` 行。
 
 ---
 
@@ -125,8 +127,10 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 | `level2Provider` | `deepseek-official` | 二级模型 provider |
 | `level2Model` | `deepseek-flash` | 二级模块负责人模型 |
 | `level3Model` | `qwen3.8-27b-gsq-rco-iq3-s-mtp` | 三级本地模型（ninfer） |
-| `level3Endpoint` | `http://127.0.0.1:18200/v1` | ninfer OpenAI 兼容接口基址 |
-| `level3InputBudget` | `500` | 三级子任务输入 token 上限（超限会被拒绝） |
+| `level3Endpoint` | 空（必须显式配置） | OpenAI 兼容接口基址，例如 `http://127.0.0.1:8080/v1` |
+| `level3Provider` | `ninfer-local` | agent 式 L3 执行器使用的 LLM provider |
+| `spawnProvider` | `spawn` | subagent provider 名（一般不用改） |
+| `level3InputBudget` | `1200` | 三级子任务输入 token 上限（超限先压缩，仍超则提示拆分） |
 | `level3MaxOutputTokens` | `4096` | 三级输出 token 上限 |
 | `semanticGateThreshold` | `0.7` | 质量门评分阈值（0~1） |
 | `maxCodeLines` | `100` | 三级子任务代码行数上限 |
@@ -363,7 +367,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 |---|---|
 | 工具不出现（`listTools` 里没有 pipeline_*） | bundle 未启用；用插件管理器确认 `dsh-pipeline` 为 enabled，或重装 |
 | 提示 `order must be a finite number` | 旧缓存版本；已通过 `-vN` 改名解决。如再遇到，重装即可 |
-| `pipeline_execute_local` 报 `ninfer ... connection refused` / `fetch failed` | ninfer 未运行；启动 ninfer 并确认 `http://127.0.0.1:18200/v1/models` 可访问 |
+| `pipeline_execute_local` 报 `level3Endpoint 未配置` / `connection refused` | 先 `/pipe-config level3Endpoint http://127.0.0.1:<port>/v1` 指向你的引擎，并确认 `/v1/models` 可访问 |
 | 报模型不存在 | 把 `level3Model` 改成 ninfer 已加载的模型 id（`/v1/models` 里可见） |
 | 一级调二/三级工具被拒（「已被守卫拦截」） | 正常：一级只能 `pipeline_spawn_module_lead`/`pipeline_send_to_lead` 委托二级；不要重试 |
 | 三级子任务反复失败 | 受 `maxLevel3Retries`(5) 限制，超限返回 `escalated:true` 并升级到二级接管，不会无限重试 |
@@ -382,4 +386,5 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 3. 直接描述一个任务（如「做一个加密解密 CLI」），看主 agent 是否自动走四阶段流程。
 
 > 说明：语义评分是确定性的「结构 + 词干关键词覆盖」代理（结构 60% + 关键词 40%），
-> 阈值默认 0.7。生产环境可替换为真正的 L2 模型评分。
+> 阈值默认 0.7；v104 起该代理**封顶 0.5**，因此没有可执行断言时无法单独过门——这是有意的 fail-closed：
+> 要过质量门，验收里请写 `函数(参数)==期望`（JS 与 Python 都支持），或显式把 `semanticGateThreshold` 调到 0.5 以下。

@@ -99,17 +99,20 @@ export function hasStructure(code) {
 // plus stemmed keyword coverage of the acceptance criteria (40%). This is a
 // mechanically checkable stand-in; a full deployment may replace it with a
 // Level-2 model score. Threshold is configurable (default 0.7).
+// v104 — cap at 0.5: a pair of braces or a matching keyword is not proof that the
+// code is correct, so the proxy can never clear a 0.7 gate on its own. Assertions
+// are the only path to "passed" unless the user lowers the threshold explicitly.
 export function semanticScore(code, acceptance) {
   const words = [...new Set(keywordTokens(acceptance).map(stem))]
   const structural = hasStructure(code) ? 0.6 : 0
-  if (words.length === 0) return Math.min(1, structural + 0.4)
+  if (words.length === 0) return Math.min(0.5, structural + 0.4)
   const hay = stem(String(code || '').toLowerCase())
   const hits = words.filter((w) => hay.includes(w)).length
   // Robust to verbose acceptance: cap the keyword count so a long acceptance
   // does not depress the ratio (prose words are no longer over-weighted).
   const capped = Math.min(words.length, 8)
   const coverage = hits / capped
-  return Math.min(1, structural + 0.4 * coverage)
+  return Math.min(0.5, structural + 0.4 * coverage)
 }
 
 export function normalizeStatus(status) {

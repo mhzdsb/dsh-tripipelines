@@ -7,28 +7,28 @@
 确认本地推理引擎活着（OpenAI 兼容，任选其一）：
 
 ```bash
-curl http://127.0.0.1:18200/v1/models
+curl http://127.0.0.1:8080/v1/models
 ```
 
 - 返回 `{"data":[{"id":"..."}]}` → 好了，记下模型 id。
-- 连不上 → 启动你的引擎（ninfer / vLLM / llama.cpp），或先跳过：流水线会用 L2 直写降级，效果打折但能用。
+- 连不上 → 启动你的引擎（llama.cpp / vLLM / Ollama / strata 等），或先跳过：没有 L3 时，L2 仍可直写降级，效果打折但能用。
 
-如果引擎端口/模型名不是默认值，等插件装好后用 `/pipe-config` 改。
+如果引擎端口/模型名不是这个值，装好后用 `/pipe-config level3Endpoint <你的地址>` 与 `/pipe-config level3Model <模型 id>` 改。
 
 ## 第 1 步：装插件（1 分钟）
 
-二选一：
+二选一（`dsh-pipeline-vNN` 是发布快照目录，`NN` 为迭代号）：
 
 **A. 插件管理器（推荐）**：打开 DSH 插件管理器 GUI，或让主 agent 执行：
 
 ```
-plugin_manager install_bundle('C:/path/to/dsh-pipeline')
+plugin_manager install_bundle('C:/path/to/dsh-pipeline-vNN')
 ```
 
-**B. 命令行**：
+**B. 命令行（需要 pnpm）**：
 
 ```bash
-dsh plugin add C:/path/to/dsh-pipeline
+dsh plugin add C:/path/to/dsh-pipeline-vNN
 ```
 
 > 装好后**新开一个会话**（或刷新页面），才能加载插件的提示词与工具。

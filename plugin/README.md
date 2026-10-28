@@ -88,7 +88,7 @@ plugin_manager install_bundle('C:/path/to/dsh-pipeline')
 | **逐任务验收标准** | 每级下发的任务由**下发方现场生成**各自的验收标准，质量门按它打分 |
 | **失败有界 + cannot-do** | L3 干不了明确回 `cannot-do`；输出错了重试 `maxLevel3Retries` 次，超限 L2 接管 |
 | **批量 L3 执行** | `pipeline_execute_batch` 一次提交 N 个子任务，内部串行、一次返回，省 N 倍推理 token |
-| **质量门跑代码断言** | 验收里有 `函数(参数)==期望` 就真跑 Python 验证；没有才回退关键词分 |
+| **质量门跑代码断言** | 验收里有 `函数(参数)==期望` 就真跑（JS/TS 用 node、Python 用受控子进程）；**全部断言通过才算过**，没有断言才回退关键词分 |
 | **按异常汇报 + 禁止轮询** | L1/L2 不轮询看板，靠 push 汇报，大幅省 token |
 | **GUI 看板（v92/v94）** | Web UI 侧栏内嵌一张与「余额」卡同款的小卡：run 状态 / 里程碑 / 每层甜点区（绿黄红）/ 活跃 L2 与模型 / token 预算，模型看不到，用户随时看得见 |
 | **每 L2 独立工作目录（v92）** | `pipeline_spawn_module_lead` 传 `scopeDir` → subagent 真实 `cwd` 隔离，多个 lead 不踩文件 |
@@ -97,7 +97,7 @@ plugin_manager install_bundle('C:/path/to/dsh-pipeline')
 | **预算护栏** | `maxTotalTokensPerRun` / `maxDurationPerRun` / `maxFilesPerRun`（0=不限） |
 | **一次性激活 Gate** | 新工作区只问一次，答案按工作区记忆，之后不再打扰 |
 | **健康自检** | `/pipe-selftest` 检查 subagents API、llm 服务、L3 引擎；启动时也会非阻塞 ping |
-| **模块化解耦** | 10 个模块，单文件 ≤300 行，`pnpm test` 一键回归 |
+| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起全部 9 套 smoke 回归 |
 | **四阶段工作流** | 引导开机 → 需求访谈 → 适配性评估 → 自适应调度 |
 
 > 完整功能清单见 [CHANGELOG.md](CHANGELOG.md)，架构细节见 [docs/agent-lifecycle-design.md](docs/agent-lifecycle-design.md)。
@@ -188,7 +188,7 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 | `pipeline_spawn_module_lead` | L1→L2 | 生成长活 flash 二级（可传 `scopeDir` 独立工作目录、`provider`/`model` 给该 L2 单独指定模型） |
 | `pipeline_send_to_lead` | L1↔L2 | 复用二级发后续任务 |
 | `pipeline_drain_leads` | L1 | 里程碑重建后释放旧二级 |
-| `pipeline_checkpoint` | L1 | 写 9 节交接文档 + 冷启动 prompt |
+| `pipeline_checkpoint` | L1 | 写 10 节交接文档 + 冷启动 prompt |
 | `pipeline_accept_milestone` | L1 | 记录里程碑用户验收 |
 | `pipeline_selftest` | L1 | 健康检查（subagents / llm / L3 引擎） |
 | `pipeline_classify` | L1 | 能力匹配分类（L1/L2/L3） |
@@ -208,7 +208,8 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 大型项目里，L1 最大的浪费不是写代码，而是**为了理解项目而把整个仓库读一遍**。知识层把这件事变成一次扫描 + 按需检索：
 
 ```
-pipeline_scan(path=".")      # 一次，几十毫秒级，产出 .dsh/knowledge/
+pipeline_scan(root=".")      # 一次机械扫描，产出 .dsh/pipeline/knowledge/
+pipeline_scan(check=true)    # 只报哪些代码文件/模块页过期，不重写
 pipeline_recall(query="backtest 引擎怎么调用核心")   # 每次只取命中片段
 pipeline_ledger()            # 从交接文档抽决策候选
 ```
@@ -237,8 +238,8 @@ pipeline_ledger()            # 从交接文档抽决策候选
 1. **桌面端不能加载非内置依赖**：可视化设置页需要 `schemastery`，用 `/pipe-config` 命令代替。
 2. **`deepseek-v4.1-flash` 不存在**，正确 id 是 `deepseek-flash`。
 3. **Agent Teams teammate 不能指定模型**（继承父 agent pro），所以二级长活用 **continuable subagent**。
-4. 质量门是「执行断言优先 + 语义关键词兜底」。
-5. **执行断言只支持 Python 代码**：JS/TS 项目会 `ran:false` 自动回落语义分（后续可抽可插拔 runner）。
+4. 质量门是「执行断言优先 + 语义关键词兜底」，断言 **fail-closed**：没有可用 runner、代码被静态安全门拦下、或任一断言失败，都判失败，不会回落关键词分。语义分本身封顶 0.5，默认阈值 0.7 下无法单独过门。
+5. **JS/TS 与 Python 都支持**：JS 走 `node` 子进程，Python 走 AST 静态安全门 + 子进程；宿主机执行可通过 `allowCodeExecution=false` 整体关闭（关闭后含断言的验收一律不通过）。
 
 ## 目录结构
 
@@ -248,7 +249,8 @@ dsh-pipeline/
 ├── cordis.patch.yml                      # bundle 补丁（插入插件行）
 ├── client.js                             # Web UI 看板卡片（左侧栏底部，2.5s 轮询 /pipeline/board）
 ├── lib/
-│   ├── plugin.js                         # 薄入口：name / inject / apply 装配（~230 行）
+│   ├── plugin.js                         # 薄入口：name / inject / apply 装配、工具分发（~360 行）
+│   ├── workspaces.js                     # 工作区注册表：root 归一化 / 会话归位 / 看板选工作区
 │   ├── config.js                         # 模型档案 / 配置键 / 分层合并与迁移 / /pipe-config
 │   ├── store.js                          # 看板 + run 状态机 + 预算 + 激活（全部落盘）
 │   ├── gates.js                          # 质量门：执行断言 / DoD / 语义评分 / 任务校验
@@ -271,7 +273,7 @@ dsh-pipeline/
 └── CHANGELOG.md                          # 版本日志
 ```
 
-`pnpm test`（在 `plugin/` 下）一键跑 7 套回归：配置/项目分层 75 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 27 断言、技能字节同步检查。
+`pnpm test`（在 `plugin/` 下）一键跑 9 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 32 断言、质量门与角色矩阵 33 断言。
 
 ---
 

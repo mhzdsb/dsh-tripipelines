@@ -8,9 +8,9 @@
  *   - listTools 核对新工具
  *
  * 用法:
- *   node dev/release.mjs v99                 # 默认 version 1.9.0（vN → 1.(N-90).0）
- *   node dev/release.mjs v99 --version 1.9.1 # 指定版本号
- *   node dev/release.mjs v99 --dry           # 只做检查，不复制
+ *   node dev/release.mjs v104                # 默认 version 1.13.0（vN → 1.(N-91).0）
+ *   node dev/release.mjs v104 --version 1.13.1 # 指定版本号
+ *   node dev/release.mjs v104 --dry           # 只做检查，不复制
  *   node dev/release.mjs --verify            # 只核对快照与源码一致性（三查①②）
  *
  * 退出码 0 = 可以安装；非 0 = 先修问题，不要重装。
@@ -44,7 +44,7 @@ const versionArg = typeof opt('version') === 'string' ? opt('version') : null
 const vArg = args.find((a) => /^v\d+[a-z]?$/i.test(a))
 const tag = vArg ? vArg.toLowerCase() : null
 const vNum = tag ? Number(tag.replace(/^v/, '').replace(/[a-z]+$/, '')) : null
-const defaultVersion = vNum ? `1.${vNum - 90}.0` : null
+const defaultVersion = vNum ? `1.${vNum - 91}.0` : null
 const version = versionArg ?? defaultVersion
 
 const problems = []
@@ -115,27 +115,48 @@ console.log('')
 // 1. CHANGELOG must already have the entry (doc-before-code-order guard)
 const changelog = join(pluginDir, 'CHANGELOG.md')
 if (!existsSync(changelog)) fail('CHANGELOG.md missing')
-else {
+if (existsSync(changelog)) {
   const txt = readFileSync(changelog, 'utf8')
   if (new RegExp(`^#{2,3}\\s*${tag}\\b`, 'm').test(txt)) pass(`CHANGELOG.md has a ${tag} entry`)
   else fail(`CHANGELOG.md has no "## ${tag}" entry — write it first (三查③)`)
+  const verAnchor = new RegExp(`^#{2,3}\\s*${tag}\\s*[—–-]\\s*${version.replace(/\./g, '\\.')}\\b`, 'm')
+  if (verAnchor.test(txt)) pass(`CHANGELOG ${tag} entry names version ${version}`)
+  else fail(`CHANGELOG ${tag} entry must carry version ${version}`)
 }
 
-// 2. source version must equal the target version
+// 3. source version must equal the target version
 const srcPkg = readJson(join(pluginDir, 'package.json'))
 if (srcPkg.version === version) pass(`source package.json version is ${version}`)
 else fail(`source package.json version is ${srcPkg.version}, expected ${version} — bump it before releasing`)
+
+// 3b. board-route BUILD_TAG must agree with the tag being released
+const boardSrc = readFileSync(join(pluginDir, 'lib', 'board-route.js'), 'utf8')
+const buildTag = (boardSrc.match(/const BUILD_TAG = '([^']+)'/) ?? [])[1]
+if (!buildTag) fail('board-route.js has no BUILD_TAG')
+else if (buildTag.toLowerCase() === tag) pass(`board-route BUILD_TAG is ${tag}`)
+else fail(`board-route BUILD_TAG is ${buildTag}, expected ${tag}`)
 
 // 3. every smoke test must pass
 const tests = readdirSync(smokeDir).filter((n) => n.endsWith('_smoke.mjs') || n === 'v90_tool_factory_probe.mjs' || n === 'verify-v82.mjs' || n === 'skill_sync_check.mjs')
 if (!tests.length) fail('no smoke tests found')
 for (const t of tests) {
-  const r = spawnSync(process.execPath, [join(smokeDir, t)], { encoding: 'utf8', timeout: 180000 })
+  // stdio:'inherit' keeps the suite's own PASS/FAIL lines visible here and, unlike
+  // piped stdio, also works when this script itself runs inside a restricted sandbox.
+  const r = spawnSync(process.execPath, [join(smokeDir, t)], { stdio: 'inherit', timeout: 180000 })
   if (r.status === 0) pass(`test ${t}`)
-  else fail(`test ${t} failed — ${(r.stdout ?? '').split('\n').filter((l) => /FAIL/.test(l)).slice(0, 3).join(' | ') || (r.stderr ?? '').slice(0, 200)}`)
+  else fail(`test ${t} failed (exit ${r.status ?? r.signal ?? 'spawn-error'})`)
 }
 
-// 4. copy source -> snapshot (never the other way round)
+// 4. stop before touching the snapshot if anything is wrong
+if (problems.length) {
+  console.log('')
+  console.log(`release BLOCKED — ${problems.length} problem(s):`)
+  for (const p of problems) console.log(`  - ${p}`)
+  console.log('snapshot NOT written.')
+  process.exit(1)
+}
+
+// 5. copy source -> snapshot (never the other way round)
 if (!dry) {
   rmSync(snapshotDir, { recursive: true, force: true })
   mkdirSync(snapshotDir, { recursive: true })
@@ -147,7 +168,7 @@ if (!dry) {
   pass(`snapshot written (${walkFiles(snapshotDir).length} files, version ${version})`)
 }
 
-// 5. snapshot must be byte-identical to source (version field excepted)
+// 6. snapshot must be byte-identical to source (version field excepted)
 if (!dry) verifySnapshot(snapshotDir, tag)
 
 // 6. what still needs a human — because it needs the GUI
@@ -156,6 +177,10 @@ if (problems.length) {
   console.log(`release BLOCKED — ${problems.length} problem(s):`)
   for (const p of problems) console.log(`  - ${p}`)
   process.exit(1)
+}
+if (dry) {
+  console.log('release dry-run: all checks passed; snapshot NOT written.')
+  process.exit(0)
 }
 console.log('snapshot is ready. Now do the two GUI steps (cannot be automated from here):')
 console.log('')
