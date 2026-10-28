@@ -186,3 +186,20 @@ export function jsonOutput() {
 export const readText = (p) => {
   try { return readFileSync(p, 'utf8') } catch { return '' }
 }
+
+// v104 — single redaction gate for every knowledge-layer write. A secret that
+// leaks into an excerpt (a hardcoded key in source, a credential in a doc) must
+// never reach index.md, a module page or the decision ledger.
+const SECRET_CONTENT = [
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
+  /((?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key)\s*[:=]\s*)['"]?[^\s'",]{6,}/gi,
+]
+
+export function redact(text) {
+  let out = String(text)
+  for (const re of SECRET_CONTENT) out = out.replace(re, (m, p1) => `${p1 ?? ''}[redacted]`)
+  return out
+}

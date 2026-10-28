@@ -89,14 +89,16 @@ try {
 }
 check('coerce rejects invalid boolean', threw)
 
-// --- 3) v81 back-compat: every v81 key still identical --------------------
+// --- 3) defaults pinned (v104: endpoint is blank by design, L3 budget raised) --
 const V81 = {
   stateDir: DEFAULT_CONFIG.stateDir,
   level2Provider: 'deepseek-official',
   level2Model: 'deepseek-flash',
   level3Model: 'qwen3.8-27b-gsq-rco-iq3-s-mtp',
-  level3Endpoint: 'http://127.0.0.1:18200/v1',
-  level3InputBudget: 500,
+  level3Endpoint: '',
+  level3Provider: 'ninfer-local',
+  spawnProvider: 'spawn',
+  level3InputBudget: 1200,
   level3MaxOutputTokens: 4096,
   level3TimeoutMs: 900000,
   semanticGateThreshold: 0.7,
@@ -113,12 +115,12 @@ const V81 = {
   devDir: 'dev',
 }
 for (const [key, value] of Object.entries(V81)) {
-  check(`v81 default unchanged: ${key}`, DEFAULT_CONFIG[key] === value, `${DEFAULT_CONFIG[key]} !== ${value}`)
+  check(`default pinned: ${key}`, DEFAULT_CONFIG[key] === value, `${DEFAULT_CONFIG[key]} !== ${value}`)
 }
 const noNewKeys = mergeConfigLayers(DEFAULT_CONFIG, {}, {}, null)
 const v81Only = {}
 for (const key of Object.keys(V81)) v81Only[key] = noNewKeys[key]
-check('layer merge with no new keys == v81 defaults', JSON.stringify(v81Only) === JSON.stringify(V81))
+check('layer merge keeps pinned defaults', JSON.stringify(v81Only) === JSON.stringify(V81))
 
 // --- 4) mergeConfigLayers behavior ---------------------------------------
 const l1 = { a: 1, b: 1 }
@@ -159,7 +161,7 @@ check('profile miss message', /该模型无档案，甜点区未联动/.test(res
 // 5c: L3 has no sweet spot since v90 (level3NumCtx removed) — change must not touch budgets
 cfg = freshCfg()
 res = handleConfigCommand(cfg, 'level3Model qwen2.5:7b')
-check('level3 model change keeps L3 budgets', cfg.level3InputBudget === 500 && cfg.level3MaxOutputTokens === 4096, `${cfg.level3InputBudget}/${cfg.level3MaxOutputTokens}`)
+check('level3 model change keeps L3 budgets', cfg.level3InputBudget === 1200 && cfg.level3MaxOutputTokens === 4096, `${cfg.level3InputBudget}/${cfg.level3MaxOutputTokens}`)
 check('level3 model text explains no linkage', /无甜点区/.test(res.text), res.text)
 
 // 5d: autoTuneSweetSpot off -> no linkage
@@ -185,6 +187,19 @@ check('reload does not recompute manual budget', reloaded.level1ContextBudget ==
 cfg = freshCfg()
 res = handleConfigCommand(cfg, 'maxCodeLines 80')
 check('unrelated key text has no linkage note', res.text === '已更新 maxCodeLines: 100 → 80', res.text)
+
+// 5i: v104 config value validation — right type, nonsense value must be rejected
+cfg = freshCfg()
+res = handleConfigCommand(cfg, 'maxCodeLines 0')
+check('rejects maxCodeLines 0', res.kind === 'error' && cfg.maxCodeLines === 100, res.text)
+res = handleConfigCommand(cfg, 'level2SweetSpotRatio 1.5')
+check('rejects ratio > 1', res.kind === 'error', res.text)
+res = handleConfigCommand(cfg, 'level1ContextBudget -5')
+check('rejects negative budget', res.kind === 'error', res.text)
+res = handleConfigCommand(cfg, 'level3Endpoint ftp://example')
+check('rejects non-http endpoint', res.kind === 'error', res.text)
+res = handleConfigCommand(cfg, 'level3Endpoint http://127.0.0.1:8080/v1')
+check('accepts http endpoint', res.kind === 'success' && cfg.level3Endpoint === 'http://127.0.0.1:8080/v1', res.text)
 
 // 5g: tuneSweetSpot is safe on bad input
 check('tuneSweetSpot(null) safe', tuneSweetSpot(null, 'level2Model', MODEL_PROFILES).changed === false)

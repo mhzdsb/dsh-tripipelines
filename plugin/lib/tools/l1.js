@@ -194,6 +194,9 @@ export function makeStatusTool(ctx, cfg, r) {
       const tasksDone = board.tasks.filter((t) => t.state === 'done').length
       const subtasksDone = board.subtasks.filter((s) => s.state === 'done').length
       const totalTokens = r.store.counters.tokensIn + r.store.counters.tokensOut
+      // v104 — tell the coordinator WHY it should stop looking: live L2s push
+      // their reports, so polling adds nothing and burns tokens.
+      const waitingFor = board.agents.filter((a) => a.state === 'in_progress').map((a) => a.label || String(a.id ?? ''))
       return {
         run_id: board.run_id,
         locked: board.locked,
@@ -207,6 +210,9 @@ export function makeStatusTool(ctx, cfg, r) {
         tasks: board.tasks,
         subtasks: board.subtasks,
         agents: board.agents,
+        ...(waitingFor.length > 0
+          ? { waitingFor, hint: `L2 正在处理（${waitingFor.join('、')}）；不要轮询——结束回合等待 push 汇报，宿主动会通知你。` }
+          : {}),
         level1Context: measureLevel1Context(ctx, exec, cfg),
         // v101b: 20 full messages can outweigh every useful board field, so echo the
         // last 10 with each text capped — enough to know what just happened.
@@ -269,7 +275,7 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
       const l2Model = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : cfg.level2Model
       // v84 — startActivation (no toolFilter; adjacency lives in the registry guard).
       const result = await subs.startActivation({
-        provider: 'spawn',
+        provider: cfg.spawnProvider || 'spawn',
         label: args.name,
         request: {
           prompt: [{ type: 'text', text: promptText }],
@@ -298,6 +304,9 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
       // v103 — the L2 session's cwd is its scopeDir, not the project root; record
       // the mapping so its pipeline_* calls land in this workspace's store.
       try { r.bindChild?.(result.childId) } catch { /* best-effort */ }
+      // v104 — hard anti-poll: the host ends this turn after the tool result, so
+      // the coordinator cannot keep polling the board while L2 works.
+      try { exec.concludeTurn?.() } catch { /* host without turn control */ }
       // Mark the old lead as replaced now; the real drain happens later via drain_leads.
       if (args.replacingChildId) {
         const old = r.store.agents.get(args.replacingChildId)
@@ -348,6 +357,8 @@ export function makeSendToLeadTool(ctx, cfg, r) {
       addRunUsage(r, cfg, msgTokens, [])
       const l2 = r.store.agents.get(args.childId)
       if (l2) l2.estimatedTokens = (l2.estimatedTokens ?? 0) + msgTokens
+      // v104 — same hard anti-poll rule as spawn: dispatch ends the coordinator's turn.
+      try { exec.concludeTurn?.() } catch { /* host without turn control */ }
       const warnThreshold = Math.floor(Number(cfg.level2ContextBudget) * 0.8)
       if (l2 && l2.estimatedTokens >= warnThreshold) {
         return { childId: args.childId, messageId, warning: `此 L2 负载已近上限（estimatedTokens≈${l2.estimatedTokens}/${cfg.level2ContextBudget}），建议拆分剩余工作或改派更闲的 L2` }

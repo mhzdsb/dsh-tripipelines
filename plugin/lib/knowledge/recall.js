@@ -7,8 +7,8 @@
  * and the result is auditable (every hit carries its source path + line number).
  */
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
-import { join } from 'node:path'
-import { readText } from '../util.js'
+import { join, resolve, relative, isAbsolute } from 'node:path'
+import { readText, redact } from '../util.js'
 
 // v101b: a scan of a large repo produces ~20 knowledge files that only change
 // when the harness re-scans, so cache file text keyed by size+mtime.
@@ -56,7 +56,19 @@ export function recall({ knowledgeDir, query, limit = 6, files }) {
   const ts = terms(query)
   if (!ts.length) return { terms: [], hits: [] }
   const targets = []
-  const push = (rel) => { const full = join(knowledgeDir, rel); if (existsSync(full)) targets.push({ rel, text: readCached(full) }) }
+  // v104 — `files` is user/model input: confine it to the knowledge dir.
+  // Absolute paths, `..` segments and symlinked escapes are refused.
+  const push = (rel) => {
+    const raw = String(rel ?? '').replace(/\\/g, '/')
+    if (!raw || isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) return
+    if (raw.split('/').includes('..')) return
+    const full = resolve(knowledgeDir, raw)
+    const relCheck = relative(knowledgeDir, full)
+    if (relCheck.startsWith('..') || isAbsolute(relCheck)) return
+    try {
+      if (existsSync(full) && statSync(full).isFile()) targets.push({ rel: raw, text: readCached(full) })
+    } catch { /* unreadable target: skip */ }
+  }
   if (files && files.length) for (const f of files) push(f)
   else {
     push('index.md')
@@ -77,7 +89,7 @@ export function recall({ knowledgeDir, query, limit = 6, files }) {
       let n = 0
       for (const term of ts) if (low.includes(term)) n++
       if (!n) continue
-      hits.push({ source: t.rel, line: i + 1, score: n, text: line.trim().slice(0, 300) })
+      hits.push({ source: t.rel, line: i + 1, score: n, text: redact(line.trim().slice(0, 300)) })
     }
   }
   hits.sort((a, b) => b.score - a.score || a.source.localeCompare(b.source))

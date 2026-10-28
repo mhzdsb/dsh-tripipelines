@@ -1,4 +1,4 @@
-import { readText } from '../util.js'
+import { readText, redact } from '../util.js'
 /**
  * Knowledge layer — decision-ledger extractor (pipeline_ledger v98).
  *
@@ -68,13 +68,13 @@ export function extractDecisions({ root, outDir }) {
     for (const sec of parseIntoSections(text)) {
       if (!/(关键决策|决策记录|key decisions)/i.test(sec.title)) continue
       for (const it of numberedItems(sec.body)) {
-        candidates.push({ kind: 'decision', source: `${cpPath}#${sec.title}`, n: it.n, title: it.title, body: it.body, missing: missingFields(it.title + ' ' + it.body) })
+        candidates.push({ kind: 'decision', source: `${cpPath}#${sec.title}`, n: it.n, title: it.title, body: redact(it.body), missing: missingFields(it.title + ' ' + it.body) })
       }
     }
     for (const sec of parseIntoSections(text)) {
       if (!/(遗留坑|坑|教训|pitfalls|lessons)/i.test(sec.title)) continue
       for (const it of numberedItems(sec.body)) {
-        candidates.push({ kind: 'lesson', source: `${cpPath}#${sec.title}`, n: it.n, title: it.title, body: it.body, missing: missingFields(it.title + ' ' + it.body) })
+        candidates.push({ kind: 'lesson', source: `${cpPath}#${sec.title}`, n: it.n, title: it.title, body: redact(it.body), missing: missingFields(it.title + ' ' + it.body) })
       }
     }
   }
@@ -101,7 +101,7 @@ export function extractDecisions({ root, outDir }) {
           const key = line.slice(0, 60)
           if (seenBodies.has(key)) continue
           seenBodies.add(key)
-          candidates.push({ kind: 'verdict', source: `${rel}#${sec.title}`, n: '', title: clip(sec.title, 40), body: clip(line, 260), missing: missingFields(line) })
+          candidates.push({ kind: 'verdict', source: `${rel}#${sec.title}`, n: '', title: clip(sec.title, 40), body: clip(redact(line), 260), missing: missingFields(line) })
         }
       }
     }

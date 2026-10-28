@@ -11,7 +11,7 @@ export function buildProtocolText(cfg) {
     'Three-tier routing (tools-enforced): L1 = you (the model the user picked for this chat) plan + spawn L2 + accept; L2 (flash) codes + dispatches L3; L3 (local engine) writes complete single-file code.',
     'New dev task: load the pipeline-orchestration skill first (onboarding → requirement interview → fit assessment), then build.',
     'STRICT BOUNDARY: never call pipeline_decompose / pipeline_execute_local / pipeline_execute_batch / pipeline_spawn_local_executor (L2/L3 tools — the guard rejects them); reach L2 via pipeline_spawn_module_lead / pipeline_send_to_lead.',
-    'AFTER DISPATCH: end your turn and wait for L2 push reports — never poll. ALWAYS reply to a report. Code yourself only as a bounded last resort: cannot-do or maxLevel2Retries failures → re-dispatch once → then code it (register + gate + record).',
+    'AFTER DISPATCH: end your turn and wait for L2 push reports — never poll. If a goal auto-continuation wakes you while L2 reports are pending, END the turn again and do nothing (do not call pipeline_status or read files). ALWAYS reply to a report. Code yourself only as a bounded last resort: cannot-do or maxLevel2Retries failures → re-dispatch once → then code it (register + gate + record).',
     `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; quality gate ${cfg.semanticGateThreshold}.`,
     'Discipline: lock requirements first; only missing credentials warrant a user question.',
     'CONTROL: on a NEW workspace ask ONCE (ask_user_question) whether to enable 流水线 mode before locking; honor /pipe-stop and /pipe-off.',

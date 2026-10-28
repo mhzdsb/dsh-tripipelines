@@ -35,8 +35,13 @@ export const DEFAULT_CONFIG = {
   level2Provider: 'deepseek-official',
   level2Model: 'deepseek-flash',
   level3Model: 'qwen3.8-27b-gsq-rco-iq3-s-mtp',
-  level3Endpoint: 'http://127.0.0.1:18200/v1',
-  level3InputBudget: 500,
+  // v104 — no default endpoint: a fresh install must point this at its own
+  // OpenAI-compatible engine (e.g. http://127.0.0.1:8080/v1) instead of silently
+  // inheriting the author's machine.
+  level3Endpoint: '',
+  level3Provider: 'ninfer-local',
+  spawnProvider: 'spawn',
+  level3InputBudget: 1200,
   level3MaxOutputTokens: 4096,
   level3TimeoutMs: 900000,
   semanticGateThreshold: 0.7,
@@ -84,8 +89,10 @@ export const CONFIG_KEYS = {
   level2Provider: { type: 'string', desc: '二级模型 provider（DeepSeek 官方）' },
   level2Model: { type: 'string', desc: '二级模块负责人模型（做任务分解）' },
   level3Model: { type: 'string', desc: '三级本地模型（ninfer / OpenAI 协议）' },
-  level3Endpoint: { type: 'string', desc: 'ninfer OpenAI 兼容接口基址（工具自动追加 /chat/completions）' },
-  level3InputBudget: { type: 'number', desc: '三级子任务输入 token 上限（超限拒绝；默认 500）' },
+  level3Endpoint: { type: 'string', desc: '本机 OpenAI 兼容接口基址（默认空，必须显式配置，例如 http://127.0.0.1:8080/v1；工具自动追加 /chat/completions）' },
+  level3Provider: { type: 'string', desc: 'Level-3 子代理使用的 LLM provider 名（默认 ninfer-local；spawn_local_executor 用）' },
+  spawnProvider: { type: 'string', desc: '子代理 provider 名（默认 spawn；startActivation 用，通常不用改）' },
+  level3InputBudget: { type: 'number', desc: '三级子任务输入 token 上限（默认 1200；超限先压缩，仍超则提示拆分）' },
   level3MaxOutputTokens: { type: 'number', desc: '三级输出 token 上限（默认 4096）' },
   level3TimeoutMs: { type: 'number', desc: '三级子任务超时毫秒（默认 900000=15 分钟；超时终止并重派）' },
   semanticGateThreshold: { type: 'number', desc: '质量门控语义评分阈值（0~1）' },
@@ -129,9 +136,20 @@ export function loadPersistedConfig() {
   return {}
 }
 
-export function savePersistedConfig(cfg) {
-  const snapshot = {}
-  for (const key of Object.keys(CONFIG_KEYS)) snapshot[key] = cfg[key]
+// v104 — persist ONLY explicitly changed keys. Writing the whole merged config
+// leaked project-layer overrides into the user's global config.json.
+export function savePersistedConfig(patch, opts = {}) {
+  const clean = {}
+  if (isPlainObj(patch)) {
+    for (const key of Object.keys(patch)) {
+      if (key in CONFIG_KEYS) clean[key] = patch[key]
+    }
+  }
+  const existing = opts.replace === true ? {} : loadPersistedConfig()
+  const snapshot = { ...(isPlainObj(existing) ? existing : {}), ...clean }
+  for (const key of Object.keys(snapshot)) {
+    if (!(key in CONFIG_KEYS)) delete snapshot[key]
+  }
   try {
     mkdirSync(dirname(CONFIG_FILE), { recursive: true })
     writeFileSync(CONFIG_FILE, JSON.stringify(snapshot, null, 2), 'utf8')
@@ -263,6 +281,42 @@ export function coerceConfigValue(key, raw) {
   return raw
 }
 
+// v104 — a value can be the right type and still be nonsense (0 lines, negative
+// budget, ratio 2.0). Validate before it reaches a run.
+const RATIO_KEYS = new Set(['level1SweetSpotRatio', 'level2SweetSpotRatio', 'level1DangerRatio', 'level2DangerRatio', 'level1ContextWarnRatio'])
+const TIMEOUT_KEYS = new Set(['level3TimeoutMs', 'maxDurationPerRun'])
+const POSITIVE_KEYS = new Set([
+  'maxCodeLines', 'maxLevel3Retries', 'maxLevel3Concurrency', 'maxLevel2Retries',
+  'maxLevel2Agents', 'maxLevel3OutputTokens', 'level1ContextBudget', 'level2ContextBudget',
+  'level1DangerBudget', 'level2DangerBudget', 'level1ContextWindow', 'level2ContextWindow',
+  'level3InputBudget', 'maxTotalTokensPerRun', 'maxFilesPerRun',
+])
+export function validateConfigValue(key, value) {
+  if (key === 'semanticGateThreshold') {
+    if (!(value >= 0 && value <= 1)) throw new Error(`${key} 必须在 0~1 之间，收到 ${value}`)
+    return
+  }
+  if (RATIO_KEYS.has(key)) {
+    if (!(value > 0 && value <= 1)) throw new Error(`${key} 必须在 (0,1] 之间，收到 ${value}`)
+    return
+  }
+  if (TIMEOUT_KEYS.has(key)) {
+    if (value !== 0 && value < 1000) throw new Error(`${key} 最小 1000ms（0 = 不限），收到 ${value}`)
+    return
+  }
+  if (POSITIVE_KEYS.has(key) && value < 1) {
+    throw new Error(`${key} 必须 ≥ 1（0 = 不限只对预算/时长/文件数有效），收到 ${value}`)
+  }
+  if (key === 'level3Endpoint') {
+    const s = String(value).trim()
+    if (s && !/^https?:\/\//i.test(s)) throw new Error(`${key} 必须是 http(s):// 开头的 OpenAI 兼容基址，收到 "${value}"`)
+    return
+  }
+  if (key === 'level3Provider' || key === 'spawnProvider') {
+    if (!String(value).trim()) throw new Error(`${key} 不能为空`)
+  }
+}
+
 export function renderConfig(cfg) {
   const lines = ['三级协作配置：']
   for (const [key, spec] of Object.entries(CONFIG_KEYS)) {
@@ -284,7 +338,7 @@ export function handleConfigCommand(cfg, rawInput) {
       // Check the project layer BEFORE resetting devDir back to its default.
       const projectKeys = Object.keys(loadProjectConfig(cfg.devDir))
       for (const key of Object.keys(CONFIG_KEYS)) cfg[key] = DEFAULT_CONFIG[key]
-      savePersistedConfig(cfg)
+      savePersistedConfig({}, { replace: true })
       let text = `已恢复默认配置：\n${renderConfig(cfg)}`
       if (projectKeys.length > 0) {
         text += '\n注意：本项目的 pipeline-project.json 仍会覆盖上述全局值（项目级配置优先级最高）。'
@@ -298,14 +352,20 @@ export function handleConfigCommand(cfg, rawInput) {
       return { kind: 'success', text: `${a} = ${cfg[a]}  (${CONFIG_KEYS[a].desc})` }
     }
     const value = coerceConfigValue(a, b)
+    validateConfigValue(a, value)
     const prev = cfg[a]
     cfg[a] = value
+    // v104 — only the keys this command actually changed reach config.json.
+    const patch = { [a]: value }
     let text = `已更新 ${a}: ${prev} → ${value}`
     if (a === 'level1Model' || a === 'level2Model' || a === 'level3Model') {
       if (cfg.autoTuneSweetSpot === true) {
         const tuned = tuneSweetSpot(cfg, a, MODEL_PROFILES)
         if (tuned.changed) {
-          for (const c of tuned.changes) text += `\n已联动更新 ${c.field}: ${c.from} → ${c.to}`
+          for (const c of tuned.changes) {
+            patch[c.field] = cfg[c.field]
+            text += `\n已联动更新 ${c.field}: ${c.from} → ${c.to}`
+          }
         } else if (tuned.profileMissing) {
           text += '\n该模型无档案，甜点区未联动，可手动 /pipe-config <甜点区键> <值> 覆盖'
         } else if (tuned.target) {
@@ -329,12 +389,15 @@ export function handleConfigCommand(cfg, rawInput) {
       const layerKey = a.startsWith('level1') ? 'level1Model' : 'level2Model'
       const tuned = tuneSweetSpot(cfg, layerKey, MODEL_PROFILES)
       if (tuned.changed) {
-        for (const c of tuned.changes) text += `\n已联动更新 ${c.field}: ${c.from} → ${c.to}`
+        for (const c of tuned.changes) {
+          patch[c.field] = cfg[c.field]
+          text += `\n已联动更新 ${c.field}: ${c.from} → ${c.to}`
+        }
       } else {
         text += '\n该层模型无档案，未联动（可手动设对应 Budget 键）'
       }
     }
-    savePersistedConfig(cfg)
+    savePersistedConfig(patch)
     return { kind: 'success', text }
   } catch (error) {
     return { kind: 'error', text: error?.message ?? String(error) }

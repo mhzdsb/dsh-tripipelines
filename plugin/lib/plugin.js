@@ -88,9 +88,15 @@ function apply(ctx, config) {
 
   // v89 — startup self-check (non-blocking): probe the local L3 engine once so a
   // dead endpoint shows up in the log now rather than at the first L3 dispatch.
+  // v104 — an unset endpoint is a configuration state, not a network failure.
   void (async () => {
+    const endpoint = String(cfg.level3Endpoint ?? '').trim()
+    if (!endpoint) {
+      console.warn('[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。')
+      return
+    }
     try {
-      const url = `${String(cfg.level3Endpoint ?? '').replace(/\/+$/, '')}/models`
+      const url = `${endpoint.replace(/\/+$/, '')}/models`
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 4000)
       const res = await fetch(url, { signal: controller.signal })
@@ -322,7 +328,7 @@ function apply(ctx, config) {
     handler: () => {
       cfg.mode = 'off'
       try {
-        savePersistedConfig(cfg)
+        savePersistedConfig({ mode: 'off' })
       } catch {
         // best-effort
       }

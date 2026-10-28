@@ -1,4 +1,4 @@
-import { readText } from '../util.js'
+import { readText, redact } from '../util.js'
 /**
  * Knowledge layer — mechanical repo scanner (pipeline_scan v98).
  *
@@ -38,19 +38,8 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024
 
 // v99: files that almost always carry credentials are recorded by path/size only — never read.
 const SECRET_NAME = /(?:^|[._-])(?:env|secrets?|credentials?|passwords?|tokens?|keys?|auth)(?:[._-]|$)|^\.env|\.(?:pem|p12|pfx|jks|keystore)$|^id_(?:rsa|ed25519|ecdsa|dsa)$/i
-// v99: if a secret ever leaks into an excerpt (a hardcoded key in source), redact it before writing.
-const SECRET_CONTENT = [
-  /\bsk-[A-Za-z0-9_-]{16,}/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
-  /((?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key)\s*[:=]\s*)['"]?[^\s'",]{6,}/gi,
-]
-const redact = (s) => {
-  let out = String(s)
-  for (const re of SECRET_CONTENT) out = out.replace(re, (m, p1) => `${p1 ?? ''}[redacted]`)
-  return out
-}
+// v104: all knowledge-layer writes go through util.redact() — see scan index,
+// module pages and ledger candidates. Nothing here may persist a raw secret.
 
 const sha8 = (buf) => createHash('sha1').update(buf).digest('hex').slice(0, 8)
 const lineCount = (p) => { try { return readText(p).split('\n').length - 1 } catch { return 0 } }
@@ -149,7 +138,7 @@ function checkpointState(root) {
     if (!txt) continue
     const m = txt.match(/##\s*0\.[^\n]*\n+([\s\S]{0,1200}?)(?=\n##\s|\n*$)/)
     const body = (m ? m[1] : txt.slice(0, 1000)).replace(/\s+/g, ' ').trim()
-    return { path: p, excerpt: body.slice(0, 420) }
+    return { path: p, excerpt: redact(body).slice(0, 420) }
   }
   return null
 }
@@ -430,7 +419,7 @@ function modulePage(root, map, m) {
     .slice(0, 6)
     .map((e) => {
       const src = readText(e.f)
-      if (e.f.endsWith('.py')) return { path: e.path, lines: e.lines, what: oneLine(headerDoc(e.f, src), 100) }
+      if (e.f.endsWith('.py')) return { path: e.path, lines: e.lines, what: redact(oneLine(headerDoc(e.f, src), 100)) }
       const names = jsExports(src).slice(0, 3)
       return { path: e.path, lines: e.lines, what: names.length ? `exports: ${names.join(', ')}` : '' }
     })
@@ -480,7 +469,7 @@ function modulePage(root, map, m) {
   const L = []
   L.push(`# ${m.id}`)
   L.push('')
-  L.push(`> ${role || '(no module docstring — describe this module in one sentence)'}`)
+  L.push(`> ${redact(role) || '(no module docstring — describe this module in one sentence)'}`)
   L.push('')
   L.push(`\`${m.codeFiles}\` files · \`${m.lines}\` lines · newest \`${m.newest}\``)
   L.push('')

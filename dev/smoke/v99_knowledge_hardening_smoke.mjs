@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { scanRepo, buildModulePages, checkStale } from '../../plugin/lib/knowledge/scan.js'
 import { extractDecisions } from '../../plugin/lib/knowledge/ledger.js'
+import { recall } from '../../plugin/lib/knowledge/recall.js'
 
 let passed = 0
 let failed = 0
@@ -40,6 +41,10 @@ w('.env', `DB_PASSWORD=${SECRET_VALUE}\nAPI_TOKEN=abc123456789012345\n`)
 w('config/secret.key', `-----BEGIN PRIVATE KEY-----\n${SECRET_VALUE}\n-----END PRIVATE KEY-----\n`)
 w('dev/project_checkpoint.md', [
   '# sample',
+  '',
+  '## 0. 当前状态',
+  '',
+  '当前状态：已接好 sk-live-abcdefghijklmnopqrst 与 password: hunter2hunter2，接下来继续。',
   '',
   '## 6. 关键决策',
   '',
@@ -72,6 +77,7 @@ const idx = readFileSync(join(out, 'index.md'), 'utf8')
 const mapJson = readFileSync(join(out, 'map.json'), 'utf8')
 ok('index.md has code modules', /## code modules/.test(idx))
 ok('secret value never leaks into index.md', !idx.includes(SECRET_VALUE))
+ok('checkpoint excerpt is redacted in index.md', /\[redacted\]/.test(idx) && !idx.includes('sk-live-abcdefghijklmnopqrst') && !idx.includes('hunter2hunter2'))
 ok('secret value never leaks into map.json', !mapJson.includes(SECRET_VALUE))
 ok('hashes.json written', existsSync(join(out, 'hashes.json')))
 const hashes = JSON.parse(readFileSync(join(out, 'hashes.json'), 'utf8'))
@@ -114,6 +120,15 @@ ok('ledger reviews the closure verdict', led.counts.review >= 1, JSON.stringify(
 const cand = readFileSync(join(out, 'ledger-candidates.md'), 'utf8')
 ok('candidates.md starts with the KEEP section', cand.indexOf('## KEEP') >= 0 && cand.indexOf('## KEEP') < cand.indexOf('## REVIEW'))
 ok('candidates.md states the tier counts', /keep \d+ \/ review \d+ \/ drop \d+/.test(cand))
+
+// --- recall path confinement (v104) ----------------------------------------------
+const trav = recall({ knowledgeDir: out, query: 'password', files: ['../../.env'] })
+ok('recall refuses a ../ traversal', trav.hits.length === 0, JSON.stringify(trav.hits.map((h) => h.source)))
+const abs = recall({ knowledgeDir: out, query: 'password', files: ['C:/Windows/win.ini'] })
+ok('recall refuses an absolute path', abs.hits.length === 0)
+const norm = recall({ knowledgeDir: out, query: 'code', files: ['index.md'] })
+ok('recall still reads a normal relative file', norm.hits.length > 0, String(norm.hits.length))
+ok('recall output is redacted', !JSON.stringify(norm.hits).includes('sk-live-abcdefghijklmnopqrst'))
 
 console.log('')
 console.log(`v99 knowledge hardening smoke: ${passed} passed, ${failed} failed`)

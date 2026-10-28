@@ -182,18 +182,24 @@ function makeSubtask(spec, fallbackId) {
 // Execute ONE Level-3 subtask: budget guard -> compressed prompt -> OpenAI call ->
 // JSON parse -> retry / escalation / bookkeeping. Shared by local + batch.
 async function executeOneL3Task(subtask, cfg, r, exec) {
+  if (!String(cfg.level3Endpoint ?? '').trim()) {
+    subtask.state = 'failed'
+    subtask.reason = 'level3Endpoint 未配置（/pipe-config level3Endpoint http://127.0.0.1:8080/v1）'
+    r.record('level3_local', 'failed', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.reason, subtask.acceptance)
+    return { ok: false, blocked: true, subtaskId: subtask.id, reason: subtask.reason }
+  }
+  // L1 context compression happens BEFORE the budget check: if compression can
+  // bring the task under budget, run it; only a still-oversized task is refused.
+  const compressedDesc = compressText(subtask.desc, cfg.level3Compression)
+  const compressedAcceptance = compressText(subtask.acceptance, cfg.level3Compression)
   // Token-budget guard (avoids small-model long-context degradation).
-  const inTokens = estimateTokens(subtask.desc)
+  const inTokens = estimateTokens(compressedDesc)
   if (inTokens > cfg.level3InputBudget) {
     subtask.state = 'failed'
-    subtask.reason = `input ${inTokens} tokens exceeds Level-3 budget ${cfg.level3InputBudget}`
+    subtask.reason = `input ${inTokens} tokens still exceeds Level-3 budget ${cfg.level3InputBudget}; split the subtask into smaller steps`
     r.record('level3_local', 'failed', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.reason, subtask.acceptance)
     return { ok: false, blocked: true, subtaskId: subtask.id, reason: subtask.reason, inputTokens: inTokens }
   }
-
-  // L1 context compression.
-  const compressedDesc = compressText(subtask.desc, cfg.level3Compression)
-  const compressedAcceptance = compressText(subtask.acceptance, cfg.level3Compression)
 
   subtask.state = 'in_progress'
   r.record('level3_local', 'in_progress', 'task_assignment', 'level3_local', subtask.id, subtask.desc, null, subtask.acceptance)
@@ -534,12 +540,12 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
         const signal = exec.signal ? AbortSignal.any([exec.signal, controller.signal]) : controller.signal
         // v84: startActivation replaced the old one-shot start(name, request) path.
         const run = await subs.startActivation({
-          provider: 'spawn',
+          provider: cfg.spawnProvider || 'spawn',
           label: 'level3-executor',
           request: {
             prompt: [{ type: 'text', text: buildL3ExecutorPrompt(args.prompt, args.acceptance, cfg) }],
             parent: exec.agent,
-            agentOptions: { provider: 'ninfer-local', model: cfg.level3Model },
+            agentOptions: { provider: cfg.level3Provider || 'ninfer-local', model: cfg.level3Model },
           },
           signal,
           delivery: 'parent',
@@ -552,7 +558,7 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
           desc: args.prompt,
           acceptance: args.acceptance ?? null,
           state: 'in_progress',
-          provider: 'ninfer-local',
+          provider: cfg.level3Provider || 'ninfer-local',
           model: cfg.level3Model,
         })
         // v103 — L3 runs in the daemon profile cwd; bind it to this workspace.
@@ -590,7 +596,7 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
           agent.status = status
         }
         r.record(LEVEL2_NAMES[0], state, 'agent_l3_result', 'level3_local', run.childId, args.prompt, reason ?? status ?? state, null)
-        return { runId: run.childId, provider: 'ninfer-local', model: cfg.level3Model, state, reason, code, status }
+        return { runId: run.childId, provider: cfg.level3Provider || 'ninfer-local', model: cfg.level3Model, state, reason, code, status }
       } finally {
         clearTimeout(timer)
         r.store.l3Concurrent--
