@@ -1,6 +1,6 @@
 {
   "name": "dsh-pipeline",
-  "version": "1.19.1",
+  "version": "1.20.0",
   "description": "Three-tier model collaboration plugin for DeepSeek Harness: L1 coordinator (any model the user picks) -> L2 (flash) module leads -> L3 (local engine) executors, with strict adjacency, long-lived L2, per-task acceptance, quality gates, per-workspace run state, per-module work directories, and a live GUI status board.",
   "author": "merhentz",
   "type": "module",
@@ -27,7 +27,7 @@
     "examples/"
   ],
   "scripts": {
-    "test": "node ../dev/smoke/verify-v82.mjs && node ../dev/smoke/v89_control_smoke.mjs && node ../dev/smoke/v90_tool_factory_probe.mjs && node ../dev/smoke/v92_board_smoke.mjs && node ../dev/smoke/v98_knowledge_smoke.mjs && node ../dev/smoke/v99_knowledge_hardening_smoke.mjs && node ../dev/smoke/skill_sync_check.mjs && node ../dev/smoke/v103_workspace_isolation_smoke.mjs && node ../dev/smoke/v104_gate_roles_smoke.mjs && node ../dev/smoke/v105_lifecycle_smoke.mjs && node ../dev/smoke/v111_audit_fixes_smoke.mjs"
+    "test": "node ../dev/smoke/verify-v82.mjs && node ../dev/smoke/v89_control_smoke.mjs && node ../dev/smoke/v90_tool_factory_probe.mjs && node ../dev/smoke/v92_board_smoke.mjs && node ../dev/smoke/v98_knowledge_smoke.mjs && node ../dev/smoke/v99_knowledge_hardening_smoke.mjs && node ../dev/smoke/skill_sync_check.mjs && node ../dev/smoke/v103_workspace_isolation_smoke.mjs && node ../dev/smoke/v104_gate_roles_smoke.mjs && node ../dev/smoke/v105_lifecycle_smoke.mjs && node ../dev/smoke/v111_audit_fixes_smoke.mjs && node ../dev/smoke/v112_audit_p2_smoke.mjs"
   },
   "license": "MIT",
   "dsh": {

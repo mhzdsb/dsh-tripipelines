@@ -80,6 +80,11 @@ export const DEFAULT_CONFIG = {
   // off: assertions then can never pass, so the gate fails closed instead of
   // silently falling back to a keyword score.
   allowCodeExecution: true,
+  // v112 (B5) — the SKILL promises a "bounded L1 takeover" (L1 writes the code
+  // itself, then registers + gates it), but pipeline_register_output/review were
+  // hard L2/L3-only, so the documented path had no legal caller. Off by default:
+  // L1 still delegates; turn it on only for the documented last-resort takeover.
+  allowLevel1Takeover: false,
 }
 
 // Editable config keys for the /pipe-config command. Each entry declares its
@@ -123,6 +128,7 @@ export const CONFIG_KEYS = {
   maxFilesPerRun: { type: 'number', desc: '单次 run 最多改动的文件数（超限自动暂停，0=不限）' },
   level3Engine: { type: 'enum', values: ['auto', 'ninfer', 'ollama', 'llamacpp', 'vllm', 'lmstudio', 'custom'], desc: '三级本地引擎提示（仅用于显示/探测/诊断，实际走 OpenAI 兼容接口）' },
   allowCodeExecution: { type: 'boolean', desc: '质量门在宿主机执行验收断言（默认 true；关掉则含断言的验收一律不通过，不再回落关键词分）' },
+  allowLevel1Takeover: { type: 'boolean', desc: '允许 L1 在兜底时直接写代码并调用 pipeline_register_output / pipeline_review（默认 false；文档里的 bounded takeover 路径）' },
 }
 
 export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')
@@ -287,7 +293,7 @@ const RATIO_KEYS = new Set(['level1SweetSpotRatio', 'level2SweetSpotRatio', 'lev
 const TIMEOUT_KEYS = new Set(['level3TimeoutMs', 'maxDurationPerRun'])
 const POSITIVE_KEYS = new Set([
   'maxCodeLines', 'maxLevel3Retries', 'maxLevel3Concurrency', 'maxLevel2Retries',
-  'maxLevel2Agents', 'maxLevel3OutputTokens', 'level1ContextBudget', 'level2ContextBudget',
+  'maxLevel2Agents', 'level3MaxOutputTokens', 'level1ContextBudget', 'level2ContextBudget',
   'level1DangerBudget', 'level2DangerBudget', 'level1ContextWindow', 'level2ContextWindow',
   'level3InputBudget', 'maxTotalTokensPerRun', 'maxFilesPerRun',
 ])

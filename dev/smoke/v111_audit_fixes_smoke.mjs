@@ -189,7 +189,8 @@ try {
   const status = makeStatusTool(ctx, cfg, r)
   const st = await status.execute({}, exec)
   const stJson = JSON.stringify(st)
-  check(`status payload stays compact (${stJson.length} chars)`, stJson.length < 3000, `${stJson.length} chars`)
+  // v112 adds tracked/measured token fields, so the compact ceiling is 3.4K.
+  check(`status payload stays compact (${stJson.length} chars)`, stJson.length < 3400, `${stJson.length} chars`)
   check('agents are projected (no code field)', st.agents.every((a) => !('code' in a)))
   check('agent desc is capped', st.agents.every((a) => String(a.desc ?? '').length <= 81))
   check('task desc is capped', st.tasks[0].desc.length <= 61)

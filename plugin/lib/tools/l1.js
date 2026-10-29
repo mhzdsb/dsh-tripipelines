@@ -7,7 +7,7 @@ import { text, LEVEL2_NAMES, TASK_STATES, estimateTokens, ensureDir, numCfg, jso
 import { validateTaskPlan, cleanupExpiredL2s } from '../gates.js'
 import { milestoneStates, loadActivation, saveActivation, addRunUsage, storeToBoard } from '../store.js'
 import { buildL2LeadPrompt } from '../prompts.js'
-import { measureLevel1Context, resolveWorkspaceRoot } from '../dsh-compat.js'
+import { measureLevel1Context, measureSessionTokens, resolveWorkspaceRoot } from '../dsh-compat.js'
 
 // v92.1 — workspace root for resolving relative scopeDir paths. v103 — the
 // registry store carries the fixed workspace root, so prefer it; the session
@@ -24,6 +24,33 @@ function requireSubagents(ctx, method, action) {
     throw new Error(`subagents service is unavailable（DSH 版本不匹配或插件未重载）——先跑 /pipe-selftest 定位，重载插件后重试；不要重复${action ?? '调用'}浪费 token。`)
   }
   return subs
+}
+
+// v112 (O7/B14) — until now an L2's context pressure was only ever ESTIMATED
+// from the text L1 sent it (`estimatedTokens` grows by prompt length, so the
+// meter and the budget guard under-reported the real session). Measure each live
+// L2 session through the tokenMeter (deterministic, no LLM call) and charge only
+// the DELTA, keeping a high-water mark so compaction does not re-charge the same
+// tokens. A missing service or session is skipped silently (older hosts).
+function accountL2Tokens(ctx, cfg, r) {
+  const store = r?.store
+  if (!store?.agents) return 0
+  let delta = 0
+  for (const a of store.agents.values()) {
+    if (!a || a.kind !== 'l2' || a.state === 'replaced' || a.state === 'failed') continue
+    let measured = null
+    try { measured = measureSessionTokens(ctx, a.id) } catch { measured = null }
+    if (typeof measured !== 'number' || !Number.isFinite(measured) || measured <= 0) continue
+    a.tokens = measured
+    const before = Number(a.measuredTokens ?? 0)
+    a.measuredTokens = Math.max(before, measured)
+    if (measured > before) delta += measured - before
+  }
+  if (delta > 0) {
+    store.counters.measuredTokens = Number(store.counters.measuredTokens ?? 0) + delta
+    addRunUsage(r, cfg, delta, [])
+  }
+  return delta
 }
 
 export function makeLockTool(ctx, cfg, r) {
@@ -131,10 +158,15 @@ export function makePlanTool(ctx, cfg, r) {
           },
         },
         reset: { type: 'boolean', description: 'Allow re-planning over a done-but-unaccepted milestone (drops that acceptance gate).' },
+        verbose: { type: 'boolean', description: 'Echo each task desc in full plus its acceptance (default: compact routing skeleton).' },
       },
     },
     output: jsonOutput(),
     async execute(args) {
+      const cap = (s, n) => {
+        const t = String(s ?? '')
+        return t.length > n ? `${t.slice(0, n - 1)}…` : t
+      }
       if (!r.store.locked || !r.store.runId) {
         throw new Error('lock requirements first with pipeline_lock_requirements')
       }
@@ -195,7 +227,23 @@ export function makePlanTool(ctx, cfg, r) {
       } else if (assignees.length <= 2 && bigRequirement) {
         planHint = `MODULE COUNT: large requirement planned with ${assignees.length} lead(s) (${assignees.join(', ')}). Independent concerns must each get a lead; consider 3+ before spawning.`
       }
-      return { run_id: r.store.runId, tasks: storeToBoard(r.store).tasks, milestones: milestoneStates(r.store), ...(planHint ? { planHint } : {}) }
+      return {
+        run_id: r.store.runId,
+        // v112 (O3) — a plan ack only needs the routing skeleton; the full
+        // desc/acceptance text was echoed back on every (re-)plan. verbose:true
+        // restores the previous full echo.
+        tasks: storeToBoard(r.store).tasks.map((t) => ({
+          id: t.id,
+          desc: cap(t.desc, args?.verbose === true ? 100000 : 80),
+          assignee: t.assignee,
+          state: t.state,
+          depends_on: t.depends_on,
+          subtaskCount: t.subtaskCount,
+          ...(args?.verbose === true ? { acceptance: t.acceptance } : {}),
+        })),
+        milestones: milestoneStates(r.store),
+        ...(planHint ? { planHint } : {}),
+      }
     },
   }
 }
@@ -213,6 +261,8 @@ export function makeStatusTool(ctx, cfg, r) {
     },
     output: jsonOutput(),
     async execute(args, exec) {
+      // v112 (O7) — charge the real L2 session growth before reporting totals.
+      const measuredDelta = accountL2Tokens(ctx, cfg, r)
       const board = storeToBoard(r.store)
       const v = args?.verbose === true
       const cap = (s, n) => {
@@ -241,6 +291,13 @@ export function makeStatusTool(ctx, cfg, r) {
         taskStates: byState(board.tasks),
         subtaskStates: byState(board.subtasks),
         counters: r.store.counters,
+        // v112 (B14) — three distinct numbers, explicitly named: `trackedTokens`
+        // is what this plugin could account for, `measuredTokens` includes the
+        // real size of live L2 sessions, `tokensUsed` is the budget guard's number.
+        trackedTokens: totalTokens,
+        measuredTokens: Number(r.store.counters.measuredTokens ?? 0),
+        tokensUsed: Number(r.store.run?.tokensUsed ?? 0),
+        measuredDelta,
         totalTokens,
         tasksDone,
         subtasksDone,
@@ -272,6 +329,8 @@ export function makeStatusTool(ctx, cfg, r) {
           model: a.model ?? null,
           scopeDir: a.scopeDir ?? null,
           estimatedTokens: a.estimatedTokens ?? null,
+          ...(Number.isFinite(a.tokens) ? { tokens: a.tokens } : {}),
+          ...(Number.isFinite(a.measuredTokens) ? { measuredTokens: a.measuredTokens } : {}),
           desc: cap(a.desc, v ? 100000 : 80),
         })),
         ...(waitingFor.length > 0
@@ -281,12 +340,12 @@ export function makeStatusTool(ctx, cfg, r) {
         // v111 (B1) — the old cap keyed on a `text` field the board never reads.
         // Project each event to who/what happened + one capped note: the raw
         // record (4-5 long string fields) cost ~500 chars per message.
-        recentMessages: r.store.messages.slice(-8).map((m) => ({
+        recentMessages: r.store.messages.slice(-6).map((m) => ({
           sender: m?.sender ?? null,
           state: m?.state ?? null,
           type: m?.message_type ?? null,
           task_id: m?.task_id ?? null,
-          note: cap(m?.task_conclusion ?? m?.task_desc ?? m?.acceptance_criteria ?? '', 140),
+          note: cap(m?.task_conclusion ?? m?.task_desc ?? m?.acceptance_criteria ?? '', 100),
         })),
       }
     },
@@ -385,6 +444,8 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
       // v103 — the L2 session's cwd is its scopeDir, not the project root; record
       // the mapping so its pipeline_* calls land in this workspace's store.
       try { r.bindChild?.(result.childId) } catch { /* best-effort */ }
+      // v112 (O7) — first real measurement of the new session (usually tiny).
+      accountL2Tokens(ctx, cfg, r)
       // v104 — hard anti-poll: the host ends this turn after the tool result, so
       // the coordinator cannot keep polling the board while L2 works.
       try { exec.concludeTurn?.() } catch { /* host without turn control */ }
@@ -438,11 +499,13 @@ export function makeSendToLeadTool(ctx, cfg, r) {
       addRunUsage(r, cfg, msgTokens, [])
       const l2 = r.store.agents.get(args.childId)
       if (l2) l2.estimatedTokens = (l2.estimatedTokens ?? 0) + msgTokens
+      // v112 (O7) — the send grew the child's real session; charge the delta.
+      accountL2Tokens(ctx, cfg, r)
       // v104 — same hard anti-poll rule as spawn: dispatch ends the coordinator's turn.
       try { exec.concludeTurn?.() } catch { /* host without turn control */ }
       const warnThreshold = Math.floor(Number(cfg.level2ContextBudget) * 0.8)
-      if (l2 && l2.estimatedTokens >= warnThreshold) {
-        return { childId: args.childId, messageId, warning: `此 L2 负载已近上限（estimatedTokens≈${l2.estimatedTokens}/${cfg.level2ContextBudget}），建议拆分剩余工作或改派更闲的 L2` }
+      if (l2 && Math.max(Number(l2.tokens ?? 0), Number(l2.estimatedTokens ?? 0)) >= warnThreshold) {
+        return { childId: args.childId, messageId, warning: `此 L2 负载已近上限（measured≈${l2.tokens ?? '—'} / estimated≈${l2.estimatedTokens}/${cfg.level2ContextBudget}），建议拆分剩余工作或改派更闲的 L2` }
       }
       return { childId: args.childId, messageId }
     },
@@ -479,6 +542,8 @@ export function makeDrainLeadsTool(ctx, cfg, r) {
         r.record('level1_main', 'failed', 'agent_drain', null, null, message, null, null)
         return { ok: false, drained: [], requested: ids, error: message }
       }
+      // v112 (O7) — take the final measurement before the sessions go away.
+      accountL2Tokens(ctx, cfg, r)
       for (const id of ids) {
         const a = r.store.agents.get(id)
         if (a) a.state = 'done'
@@ -664,7 +729,11 @@ export function makeSelftestTool(ctx, cfg, r) {
       }
       add('L3 engine', engineOk, engineDetail)
       const degraded = checks.filter((c) => !c.ok).map((c) => c.name)
-      return { ok: degraded.length === 0, degraded, checks }
+      // v112 (B15) — `ok` used to be false whenever the optional L3 engine was
+      // missing, which read as "the plugin is broken". `ready` is the real
+      // verdict (all core services present); `degraded` lists optional pieces and
+      // the caller decides whether that matters.
+      return { ok: true, ready: degraded.length === 0, degraded, checks }
     },
   }
 }

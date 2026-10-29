@@ -34,7 +34,7 @@ export function createStore(cfg, opts = {}) {
     subtasks: new Map(),
     agents: new Map(),
     messages: [],
-    counters: { llmCalls: 0, tokensIn: 0, tokensOut: 0, l2Spawns: 0, l2Sends: 0, l3Calls: 0, l3TokensIn: 0, l3TokensOut: 0 },
+    counters: { llmCalls: 0, tokensIn: 0, tokensOut: 0, l2Spawns: 0, l2Sends: 0, l3Calls: 0, l3TokensIn: 0, l3TokensOut: 0, measuredTokens: 0 },
     l3Concurrent: 0,
     // v94 — sweet-spot telemetry for the sidebar card: L1 context pressure measured by
     // the tokenMeter on tool calls (best effort), L2 pressure estimated per agent.
@@ -153,6 +153,9 @@ export function createStore(cfg, opts = {}) {
     } catch {
       // best-effort
     }
+    // v112 (B11) — replay the durable message tail so a cold start sees who
+    // reported what, not an empty history.
+    replayTrace(dir)
   }
 
   function tracePath() {
@@ -220,9 +223,35 @@ export function createStore(cfg, opts = {}) {
 
   function snapshotBoard() {
     try {
-      writeFileSync(boardPath(), JSON.stringify(storeToBoard(store), null, 2), 'utf8')
+      // v112 (O10) — board.json is a crash-recovery file, not an interface: the
+      // pretty-printed 2-space JSON doubled its size for no reader.
+      writeFileSync(boardPath(), JSON.stringify(storeToBoard(store)), 'utf8')
     } catch {
       // best-effort persistence
+    }
+  }
+
+  // v112 (B11) — restore used to rebuild the board but silently drop the message
+  // history, so a cold-started L1 saw `recentMessages: []` and lost the audit
+  // trail of who reported what. The trace file is append-only and already on
+  // disk: replay its tail (bounded) instead of asking the model to remember.
+  function replayTrace(dir, limit = 20) {
+    try {
+      const runId = store.runId ?? store.run?.id
+      if (!runId) return
+      const file = join(dir, `trace-${runId}.jsonl`)
+      if (!existsSync(file)) return
+      const lines = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim())
+      for (const line of lines.slice(-Math.max(1, limit))) {
+        try {
+          const { ts, run_id, ...message } = JSON.parse(line)
+          if (message && typeof message === 'object' && message.sender) store.messages.push(message)
+        } catch {
+          // skip a torn line; the rest of the tail is still useful
+        }
+      }
+    } catch {
+      // best-effort recovery
     }
   }
 

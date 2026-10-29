@@ -319,7 +319,7 @@ async function executeOneL3Task(subtask, cfg, r, exec) {
     parsed = safeParseJson(raw)
   } catch (err) {
     subtask.failCount = (subtask.failCount ?? 0) + 1
-    const max = numCfg(cfg, 'maxLevel3Retries', 2)
+    const max = numCfg(cfg, 'maxLevel3Retries', 5)
     subtask.reason = `local model call failed: ${err?.message ?? err}`
     if (subtask.failCount >= max) {
       subtask.state = 'failed'
@@ -346,7 +346,7 @@ async function executeOneL3Task(subtask, cfg, r, exec) {
   // failed subtask, not code="null" queued for review.
   if (!parsed || typeof parsed !== 'object') {
     subtask.failCount = (subtask.failCount ?? 0) + 1
-    const max = numCfg(cfg, 'maxLevel3Retries', 2)
+    const max = numCfg(cfg, 'maxLevel3Retries', 5)
     subtask.reason = `local model returned a non-object payload: ${String(parsed).slice(0, 120)}`
     if (subtask.failCount >= max) {
       subtask.state = 'failed'

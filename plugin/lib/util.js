@@ -30,11 +30,15 @@ export function ensureDir(dir) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
-// Rough token estimate (~4 chars/token). Documented as an estimate, not a
-// provider billing figure.
+// Rough token estimate. Latin text is ~4 chars/token, but CJK is ~1-1.6
+// chars/token, so a flat /4 under-counted every Chinese doc/prompt by ~3x.
+// v112 (B9): count CJK code points separately instead of assuming ASCII.
+const CJK_RE = /[\u2E80-\u2EFF\u3000-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/g
 export function estimateTokens(input) {
   const s = typeof input === 'string' ? input : JSON.stringify(input)
-  return Math.ceil(s.length / 4)
+  const cjk = (s.match(CJK_RE) ?? []).length
+  const ascii = s.length - cjk
+  return Math.max(1, Math.ceil(cjk / 1.6 + ascii / 4))
 }
 
 // L0 = full context; L1 = key-fact extraction (~2.5x reduction): keep code /

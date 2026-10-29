@@ -8,9 +8,9 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { DEFAULT_CONFIG, loadPersistedConfig, savePersistedConfig, migratePersistedLevel3Config, mergeConfigLayers, loadProjectConfig, handleConfigCommand } from './config.js'
-import { milestoneStates, budgetRefusal } from './store.js'
+import { milestoneStates, budgetRefusal, runFooter } from './store.js'
 import { createWorkspaceRegistry } from './workspaces.js'
-import { buildProtocolText, SKILL_BODY } from './prompts.js'
+import { buildProtocolText, buildProtocolOffText, SKILL_BODY } from './prompts.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { installBoardRoute } from './board-route.js'
 import { RUN_FOOTER_TOOLS, withRunFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
@@ -20,6 +20,23 @@ import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeRevi
 
 const name = 'pipeline'
 const inject = ['tools', 'systemPrompt', 'skills', 'commands', 'llm']
+
+// v112 (O8) — with mode=off the orchestration surface is dead weight in every
+// request's tool list. Keep only the read-only/diagnostic subset registered;
+// `/pipe-config mode auto` + reload restores the full surface.
+export const OFF_MODE_TOOLS = new Set([
+  'pipeline_status',
+  'pipeline_classify',
+  'pipeline_selftest',
+  'pipeline_scan',
+  'pipeline_ledger',
+  'pipeline_recall',
+])
+
+export function shouldRegisterTool(toolName, cfg) {
+  if (String(cfg?.mode) !== 'off') return true
+  return OFF_MODE_TOOLS.has(toolName)
+}
 
 // v103 — tool factories only need a store-shaped object while the plugin is
 // registered; the real per-workspace stores are created lazily by the registry.
@@ -33,7 +50,7 @@ function definitionStore() {
   const store = {
     stateDir: '', workspaceRoot: null, runId: null, requirement: null, locked: false,
     tasks: new Map(), subtasks: new Map(), agents: new Map(), messages: [],
-    counters: { llmCalls: 0, tokensIn: 0, tokensOut: 0, l2Spawns: 0, l2Sends: 0, l3Calls: 0, l3TokensIn: 0, l3TokensOut: 0 },
+    counters: { llmCalls: 0, tokensIn: 0, tokensOut: 0, l2Spawns: 0, l2Sends: 0, l3Calls: 0, l3TokensIn: 0, l3TokensOut: 0, measuredTokens: 0 },
     l3Concurrent: 0, context: { level1Tokens: 0 }, run,
   }
   return { store, stateDir: '', record: () => ({}), tracePath: () => '', boardPath: () => '', saveRun: () => {}, snapshotBoard: () => {}, bindSession: () => true }
@@ -86,6 +103,39 @@ function apply(ctx, config) {
     log: (msg) => console.log(msg),
   })
 
+  // v112 (B13) — a host that dropped one of these APIs used to fail with a raw
+  // TypeError at the first dispatch (unreadable for the user). Probe the Service
+  // surface once at load and name exactly what is missing; the L3 engine and the
+  // tokenMeter stay optional (degraded, not broken).
+  void (async () => {
+    const required = [
+      ['subagents', ['startActivation', 'sendMessage', 'drainChildren']],
+      ['sessions', ['get']],
+      ['llm', ['stream']],
+    ]
+    const optional = [
+      ['tokenMeter', ['measure', 'estimateMessage']],
+    ]
+    const missing = []
+    const soft = []
+    for (const [svc, methods] of required) {
+      const s = ctx.get?.(svc)
+      if (!s) { missing.push(`${svc} service`); continue }
+      for (const m of methods) if (typeof s[m] !== 'function') missing.push(`${svc}.${m}`)
+    }
+    for (const [svc, methods] of optional) {
+      const s = ctx.get?.(svc)
+      if (!s) { soft.push(`${svc} service`); continue }
+      for (const m of methods) if (typeof s[m] !== 'function') soft.push(`${svc}.${m}`)
+    }
+    if (missing.length) {
+      console.warn(`[pipeline] 宿主缺少必需 API：${missing.join('、')}。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。`)
+    }
+    if (soft.length) {
+      console.warn(`[pipeline] 宿主缺少可选 API：${soft.join('、')}；上下文计量退回估算，读数偏小（功能可用）。`)
+    }
+  })()
+
   // v89 — startup self-check (non-blocking): probe the local L3 engine once so a
   // dead endpoint shows up in the log now rather than at the first L3 dispatch.
   // v104 — an unset endpoint is a configuration state, not a network failure.
@@ -107,12 +157,19 @@ function apply(ctx, config) {
     }
   })()
 
+  // v112 (O8) — with mode=off the whole orchestration surface is dead weight in
+  // every request's tool list (~1.7K tokens of schemas). Register only the
+  // read-only/diagnostic subset; /pipe-config mode auto + reload restores the
+  // full surface. Runtime /pipe-off keeps the registered tools (guard refuses)
+  // until the next reload.
+  const modeOff = String(cfg.mode) === 'off'
+
   // 1. Routing protocol injected into every model step.
   ctx.systemPrompt.section({
     name: 'pipeline:protocol',
     // Finite sort order in the team-policy neighborhood (TEAM_POLICY=600).
     order: 650,
-    text: buildProtocolText(cfg),
+    text: modeOff ? buildProtocolOffText() : buildProtocolText(cfg),
   })
 
   // 2. Runtime skill registration (the on-disk skills/ folder satisfies the
@@ -133,9 +190,11 @@ function apply(ctx, config) {
   installBoardRoute(ctx, registry, cfg)
 
   // 3. Tool surface (v89: every L1 tool result carries the live run footer;
-  //    v103: each call is dispatched to the store of ITS workspace).
-  let footerR = null
+  //    v103: each call is dispatched to the store of ITS workspace;
+  //    v112: the footer travels ON the result value, so concurrent calls from
+  //    different workspaces can never render each other's run state).
   for (const t of buildEntryTools(ctx, cfg, definitionR)) {
+    if (!shouldRegisterTool(t.name, cfg)) continue
     const registered = {
       ...t,
       execute: async (args, exec) => {
@@ -158,11 +217,21 @@ function apply(ctx, config) {
         if (!target || typeof target.execute !== 'function') {
           throw new Error(`pipeline: ${t.name} 未在该工作区初始化`)
         }
-        footerR = entry.r
-        return target.execute(args, exec)
+        const result = await target.execute(args, exec)
+        if (RUN_FOOTER_TOOLS.has(t.name) && result && typeof result === 'object') {
+          try {
+            // Non-enumerable: JSON output never leaks the footer, render() reads it.
+            Object.defineProperty(result, '__pipelineFooter', {
+              value: runFooter(entry.r), enumerable: false, configurable: true,
+            })
+          } catch {
+            // frozen result: render simply omits the footer
+          }
+        }
+        return result
       },
     }
-    ctx.tools.register(RUN_FOOTER_TOOLS.has(t.name) ? withRunFooter(registered, () => footerR) : registered)
+    ctx.tools.register(RUN_FOOTER_TOOLS.has(t.name) ? withRunFooter(registered) : registered)
   }
 
   // Strict adjacency + role separation at the tool layer (v103). A caller whose
@@ -171,7 +240,7 @@ function apply(ctx, config) {
   ctx.tools.guard((execution) => {
     const tier = registry.tierOf(execution)
     const entry = registry.peek(execution)
-    const adjacency = strictAdjacencyDenial(tier, entry?.r, execution)
+    const adjacency = strictAdjacencyDenial(tier, entry?.r, execution, { allowLevel1Takeover: cfg.allowLevel1Takeover === true })
     if (adjacency) return adjacency
     // v89 hard gate: a finished-but-unaccepted milestone blocks every advancing tool.
     if (ADVANCE_TOOLS.has(execution.name) && entry) {
@@ -345,7 +414,8 @@ function apply(ctx, config) {
         const entry = registry.peek(invocation)
         const result = await makeSelftestTool(ctx, cfg, entry?.r ?? definitionR).execute({})
         const lines = result.checks.map((c) => `${c.ok ? '✅' : '❌'} ${c.name}：${c.detail}`)
-        return { kind: result.ok ? 'success' : 'error', text: lines.join('\n') }
+        if (result.degraded?.length) lines.push('', `⚠️ 降级：${result.degraded.join('、')}`)
+        return { kind: result.ready ? 'success' : 'error', text: lines.join('\n') }
       } catch (err) {
         return { kind: 'error', text: `自检失败：${err?.message ?? err}` }
       }

@@ -144,9 +144,11 @@ Only you talk to the user.
   pipeline_status (the board does not record reports).
 - WAIT, DON'T POLL: while waiting for an L2 push, if a goal auto-continuation wakes L1, END the
   turn and do nothing — never poll pipeline_status or the filesystem.
-- L1 BOUNDED TAKEOVER: L1 does not code by default; only as a last resort (cannot-do or
-  maxLevel2Retries failures) — re-dispatch once, then code directly, register through the gate and
-  record it.
+- L1 BOUNDED TAKEOVER (v112): L1 does not code by default; only as a last resort (cannot-do or
+  maxLevel2Retries failures) — re-dispatch once, then code directly and record it. Registering and
+  gating that code needs `allowLevel1Takeover` (default false; `/pipe-config allowLevel1Takeover
+  true` lets L1 call pipeline_register_output / pipeline_review). Leave it off unless you accept the
+  role blur; with it off, write the file and hand the gating to an L2.
 - ACTIVATION GATE (v89): in a new workspace ask ONCE via ask_user_question before the first
   pipeline_lock_requirements ("三级流水线要在这里启用吗？A 启用 / B 只做普通回答 / C 记住此工作区"),
   pass as activation=enable|normal|remember. Stored in the workspace's activation.json, so

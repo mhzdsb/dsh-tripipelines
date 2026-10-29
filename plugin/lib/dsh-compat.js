@@ -113,20 +113,78 @@ function tailSurfaceTokens(session, meter) {
     return 0
   }
 }
+
+// v112 (B10) — tokenMeter.measure() already exposes the number we want:
+// `totalTokens` is documented as "current request pressure" (baseline + live
+// surface delta), i.e. exactly what the sweet-spot warning needs. The old
+// tail-40 heuristic re-derived a worse version of it and under-counted long
+// sessions (older uncompacted turns were invisible). Keep the heuristic only as
+// a fallback for older hosts. Throws are swallowed: measurement is optional.
+function measurePressure(session, meter) {
+  try {
+    if (typeof meter.measure !== 'function') return null
+    const header = typeof session.requestHeader === 'function' ? session.requestHeader() : undefined
+    const m = meter.measure(session, header)
+    const n = m && Number(m.totalTokens)
+    return Number.isFinite(n) && n > 0 ? n : null
+  } catch {
+    return null
+  }
+}
+
+// v112 (O7) — measured L2 pressure. The subagents service exposes the child
+// session id (durable), and sessions.get() hands back its live Session, so the
+// same tokenMeter can price a Level-2 lead instead of guessing. Bounded cache:
+// one entry per agent id, refreshed on the same TTL as the L1 meter.
+const childTokenCache = new Map()
+export function measureSessionTokens(ctx, sessionId) {
+  try {
+    const meter = ctx && ctx.get ? ctx.get('tokenMeter') : undefined
+    const sessions = ctx && ctx.get ? ctx.get('sessions') : undefined
+    if (!meter || typeof meter.measure !== 'function' || !sessions || typeof sessions.get !== 'function') return null
+    const key = String(sessionId ?? '')
+    if (!key) return null
+    const now = Date.now()
+    const hit = childTokenCache.get(key)
+    if (hit && now - hit.at < METER_TTL_MS) return hit.tokens
+    const session = sessions.get(key)
+    if (!session) return null
+    const n = measurePressure(session, meter)
+    if (n == null) return null
+    if (childTokenCache.size > 256) childTokenCache.clear()
+    childTokenCache.set(key, { at: now, tokens: n })
+    return n
+  } catch {
+    return null
+  }
+}
+
 export function measureLevel1Context(ctx, source, cfg) {
   try {
     const meter = ctx && ctx.get ? ctx.get('tokenMeter') : undefined
-    if (!meter || typeof meter.estimateMessage !== 'function') return null
+    if (!meter) return null
     const session = resolveSession(ctx, source)
     if (!session) return null
     const key = String(session.id ?? 'l1')
     const now = Date.now()
     const hit = meterCache.get(key)
     let totalTokens
-    if (hit && now - hit.at < METER_TTL_MS) totalTokens = hit.tokens
-    else {
-      totalTokens = tailSurfaceTokens(session, meter)
-      meterCache.set(key, { at: now, tokens: totalTokens })
+    let source2
+    if (hit && now - hit.at < METER_TTL_MS) {
+      totalTokens = hit.tokens
+      source2 = hit.source
+    } else {
+      const measured = measurePressure(session, meter)
+      if (measured != null) {
+        totalTokens = measured
+        source2 = 'tokenMeter.measure'
+      } else if (typeof meter.estimateMessage === 'function') {
+        totalTokens = tailSurfaceTokens(session, meter)
+        source2 = 'tail40'
+      } else {
+        return null
+      }
+      meterCache.set(key, { at: now, tokens: totalTokens, source: source2 })
     }
     const budget = Number(cfg.level1ContextBudget) || 64000
     const ratio = budget > 0 ? totalTokens / budget : 0
@@ -134,7 +192,15 @@ export function measureLevel1Context(ctx, source, cfg) {
     const warning = ratio >= warnRatio
       ? `L1 上下文已到 ${Math.round(ratio * 100)}%（${totalTokens}/${budget}，阈值 ${Math.round(warnRatio * 100)}%），建议 checkpoint 交接`
       : null
-    return { totalTokens, budget, ratio: Number(ratio.toFixed(3)), warnRatio, warning }
+    return {
+      totalTokens,
+      budget,
+      ratio: Number(ratio.toFixed(3)),
+      warnRatio,
+      warning,
+      source: source2,
+      approximate: source2 !== 'tokenMeter.measure',
+    }
   } catch {
     return null
   }

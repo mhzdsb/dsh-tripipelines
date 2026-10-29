@@ -2,6 +2,29 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（`dsh-pipeline-vN`），版本号即迭代序号。
 
+## v112 — 1.20.0（审计 P1/P2：真实上下文计量、事件回放、off 模式瘦身）
+
+### 修复
+- **B9 token 估算（P1）**：`estimateTokens` 改为 CJK 感知（`cjk/1.6 + ascii/4`）。此前统一 `chars/4`，对中文内容**低估约 40%**，导致预算守卫和 L3 输入预算都偏松。
+- **B10 上下文比率（P1）**：`measureLevel1Context` 优先用 `tokenMeter.measure(session, requestHeader()).totalTokens`（宿主文档定义的「当前请求压力」），拿不到时回退旧的 tail-40 事件估算，并在返回值里标注 `source` / `approximate`；面板与检查点提示不再因估算偏小而迟到。
+- **O7/B14 L2 真实消耗（P1）**：新增 `accountL2Tokens()`——对每个在跑的 L2 用 `tokenMeter.measure()` 取会话总量，按**高水位增量**计入 `counters.measuredTokens` 与 `run.tokensUsed`；在 spawn/send/status/drain 时结算。`pipeline_status` 现在显式区分 `trackedTokens`（插件自己估算的 I/O）、`measuredTokens`（宿主实测）、`tokensUsed`（预算累计）与 `measuredDelta`，`totalTokens` 保留为兼容别名。
+- **B2 配置校验（P1）**：`POSITIVE_KEYS` 里的 `maxLevel3OutputTokens` 拼写错误修正为 `level3MaxOutputTokens`——此前 `/pipe-config level3MaxOutputTokens 0` 能写进配置并直送 `max_tokens`。
+- **B5 L1 兜底路径（P2）**：新增配置 `allowLevel1Takeover`（默认 `false`）。开启后守卫允许 L1 在兜底时调用 `pipeline_register_output` / `pipeline_review`；关闭时 SKILL 明确「写文件后交给 L2 过门禁」。文档与实现不再互相矛盾。
+- **B6 footer 竞态（P2）**：运行页脚改为挂在工具结果值上的非枚举 `__pipelineFooter`，由该次调用自己的闭包生成；并发调用不同工作区时不会再渲染成另一个 run 的状态。
+- **B8 回退值不一致（P2）**：三处 `maxLevel3Retries` 的兜底默认值统一为 5（此前 execute 路径用 2、review 路径用 5）。
+- **B11 消息回放（P2）**：冷启动 `restore` 时回放 `trace-<runId>.jsonl` 尾部 20 条事件到 `store.messages`，`recentMessages` 不再在重启后凭空消失。
+- **B13 宿主能力（P2）**：不再猜测 DSH 版本写 `engines`；插件启动时探测必需 Service（subagents/sessions/llm）与可选 Service（tokenMeter），缺失时打印可读告警，而不是等工具调用时才报错。
+- **B15 selftest 语义（P2）**：返回 `{ok, ready, degraded, checks}`——`ok` 表示检查本身跑完，`ready:false` 表示有核心服务不可用（如 L3 引擎未启动），不再把「引擎没开」误读成「插件坏了」。
+- **O3 plan 回显（P1）**：`pipeline_plan` 默认只回路由骨架（任务 `desc≤80` + id/assignee/depends_on/state），`verbose:true` 才回全文。
+- **O4 协议瘦身（P1）**：每请求注入的协议 1,742 → 925 字符（≈436 → 232 tok），保留分层边界/委派规则/禁轮询/里程碑验收/预算与知识库入口；新增 `mode=off` 专用短文案（193 字符）。
+- **O8 off 模式（P2）**：`mode=off` 时只注册 6 个只读/诊断工具（status/classify/selftest/scan/ledger/recall），其余 13 个 schema 不再占每个请求的工具表；`/pipe-config mode auto` + 重载恢复。
+- **O10 board.json（P2）**：快照写为紧凑 JSON（仍含完整任务/agent 字段供恢复）。
+
+### 测试
+- 新增 `dev/smoke/v112_audit_p2_smoke.mjs`（39 断言）：CJK 估算、配置键校验、协议长度/off 文案、takeover 守卫矩阵、footer 值传递、plan 精简/verbose、status 的 tracked/measured 字段（假 tokenMeter）、selftest 形状、紧凑 board.json + trace 回放、mode=off 只注册 6 工具 / mode=auto 注册 19 工具。
+- `v111` 的 status 上限从 3,000 放宽到 3,400（v112 增加了计量字段）。
+- 测试链 11 → 12 套件，`npm test` 全绿。
+
 ## v111 — 1.19.1（审计 P0：省 token + 堵路径逃逸）
 
 ### 修复

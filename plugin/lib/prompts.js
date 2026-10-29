@@ -7,17 +7,24 @@ import { join, resolve } from 'node:path'
 // ---------------------------------------------------------------------------
 
 export function buildProtocolText(cfg) {
+  // v112 (O4) — this text sits in EVERY request's system prompt, so it carries
+  // only the decisions a model cannot recover from the tool schemas or the skill:
+  // layering + boundary, dispatch/wait discipline, milestone gate, budget, config.
   return [
-    'Three-tier routing (tools-enforced): L1 = you (the model the user picked for this chat) plan + spawn L2 + accept; L2 (flash) codes + dispatches L3; L3 (local engine) writes complete single-file code.',
-    'New dev task: load the pipeline-orchestration skill first (onboarding → requirement interview → fit assessment), then build.',
-    'STRICT BOUNDARY: never call pipeline_decompose / pipeline_execute_local / pipeline_execute_batch / pipeline_spawn_local_executor (L2/L3 tools — the guard rejects them); reach L2 via pipeline_spawn_module_lead / pipeline_send_to_lead.',
-    'AFTER DISPATCH: end your turn and wait for L2 push reports — never poll. If a goal auto-continuation wakes you while L2 reports are pending, END the turn again and do nothing (do not call pipeline_status or read files). ALWAYS reply to a report. Code yourself only as a bounded last resort: cannot-do or maxLevel2Retries failures → re-dispatch once → then code it (register + gate + record).',
-    `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; quality gate ${cfg.semanticGateThreshold}.`,
-    'Discipline: lock requirements first; only missing credentials warrant a user question.',
-    'CONTROL: on a NEW workspace ask ONCE (ask_user_question) whether to enable 流水线 mode before locking; honor /pipe-stop and /pipe-off.',
-    'MILESTONE GATE: a done-but-unaccepted milestone blocks pipeline_spawn_module_lead / pipeline_send_to_lead — run the acceptance dialog, then pipeline_accept_milestone.',
-    'BUDGET: token/time/file caps per run; a ⏸️ result means paused — tell the user, never force past it.',
-    'KNOWLEDGE: on an existing repo run pipeline_scan once (mechanical index + one page per module) and pipeline_ledger (decision candidates); answer from pipeline_recall instead of re-reading files or asking the user what the repo already records.',
+    'Three-tier pipeline (tools-enforced): L1 = you (the chat model) plan + spawn L2 + accept; L2 (flash) codes + dispatches L3; L3 (local engine) writes single-file code.',
+    'Read skill pipeline-orchestration before building. Never call L2/L3 tools yourself (decompose/execute_*/spawn_local_executor; review/register_output only when allowLevel1Takeover); reach L2 via pipeline_spawn_module_lead / pipeline_send_to_lead.',
+    'Dispatch = end the turn and wait for push reports: never poll, always reply to a report. A done-but-unaccepted milestone blocks spawn/send: run the acceptance dialog, then pipeline_accept_milestone. ⏸️ = budget paused — tell the user, never force past it.',
+    `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; gate ${cfg.semanticGateThreshold}; takeover ${cfg.allowLevel1Takeover === true ? 'on' : 'off'}.`,
+    'Lock requirements first (ask the user only for missing credentials). On an existing repo: pipeline_scan + pipeline_ledger once, then answer from pipeline_recall instead of re-reading files.',
+  ].join('\n')
+}
+
+// mode=off surface (v112/O8): only the diagnostic subset is registered, so this
+// short text replaces the routing protocol entirely.
+export function buildProtocolOffText() {
+  return [
+    '流水线已关闭（mode=off）：当前只注册 pipeline_status / pipeline_classify / pipeline_selftest / pipeline_scan / pipeline_ledger / pipeline_recall。',
+    '不要派发 L2/L3、不要启动新的 run。用户需要恢复时执行 /pipe-config mode auto，重载后生效。',
   ].join('\n')
 }
 
@@ -221,9 +228,11 @@ Only you talk to the user.
   pipeline_status (the board does not record reports).
 - WAIT, DON'T POLL: while waiting for an L2 push, if a goal auto-continuation wakes L1, END the
   turn and do nothing — never poll pipeline_status or the filesystem.
-- L1 BOUNDED TAKEOVER: L1 does not code by default; only as a last resort (cannot-do or
-  maxLevel2Retries failures) — re-dispatch once, then code directly, register through the gate and
-  record it.
+- L1 BOUNDED TAKEOVER (v112): L1 does not code by default; only as a last resort (cannot-do or
+  maxLevel2Retries failures) — re-dispatch once, then code directly and record it. Registering and
+  gating that code needs \`allowLevel1Takeover\` (default false; \`/pipe-config allowLevel1Takeover
+  true\` lets L1 call pipeline_register_output / pipeline_review). Leave it off unless you accept the
+  role blur; with it off, write the file and hand the gating to an L2.
 - ACTIVATION GATE (v89): in a new workspace ask ONCE via ask_user_question before the first
   pipeline_lock_requirements ("三级流水线要在这里启用吗？A 启用 / B 只做普通回答 / C 记住此工作区"),
   pass as activation=enable|normal|remember. Stored in the workspace's activation.json, so
