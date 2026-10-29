@@ -2,7 +2,7 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（`dsh-pipeline-vN`），版本号即迭代序号。
 
-## v112.1 — 1.20.1（修复 v112 的 footer 宿主校验错误）
+## v113 — 1.20.1（修复 v112 的 footer 宿主校验错误）
 
 ### 修复
 - **B6 回归**：v112.0 把页脚挂成结果值上的非枚举属性 `__pipelineFooter`，宿主对工具返回值做 lossless-JSON 校验时拒绝该额外属性，13 个带页脚的工具全部报 `tool "..." returned invalid output: value is not lossless JSON`（面板之外的调用不可用）。改为模块级 `WeakMap`：结果对象本身保持纯 JSON，`render()` 仍能取到**本次调用**的页脚，跨工作区并发隔离不变。
@@ -17,7 +17,7 @@
 - **O7/B14 L2 真实消耗（P1）**：新增 `accountL2Tokens()`——对每个在跑的 L2 用 `tokenMeter.measure()` 取会话总量，按**高水位增量**计入 `counters.measuredTokens` 与 `run.tokensUsed`；在 spawn/send/status/drain 时结算。`pipeline_status` 现在显式区分 `trackedTokens`（插件自己估算的 I/O）、`measuredTokens`（宿主实测）、`tokensUsed`（预算累计）与 `measuredDelta`，`totalTokens` 保留为兼容别名。
 - **B2 配置校验（P1）**：`POSITIVE_KEYS` 里的 `maxLevel3OutputTokens` 拼写错误修正为 `level3MaxOutputTokens`——此前 `/pipe-config level3MaxOutputTokens 0` 能写进配置并直送 `max_tokens`。
 - **B5 L1 兜底路径（P2）**：新增配置 `allowLevel1Takeover`（默认 `false`）。开启后守卫允许 L1 在兜底时调用 `pipeline_register_output` / `pipeline_review`；关闭时 SKILL 明确「写文件后交给 L2 过门禁」。文档与实现不再互相矛盾。
-- **B6 footer 竞态（P2）**：运行页脚改为按结果值存于模块级 WeakMap（v112.1 修正：v112.0 的「挂非枚举属性」会被宿主 lossless-JSON 校验拒绝）；并发调用不同工作区时不会再渲染成另一个 run 的状态。
+- **B6 footer 竞态（P2）**：运行页脚改为按结果值存于模块级 WeakMap（v113 修正：v112.0 的「挂非枚举属性」会被宿主 lossless-JSON 校验拒绝）；并发调用不同工作区时不会再渲染成另一个 run 的状态。
 - **B8 回退值不一致（P2）**：三处 `maxLevel3Retries` 的兜底默认值统一为 5（此前 execute 路径用 2、review 路径用 5）。
 - **B11 消息回放（P2）**：冷启动 `restore` 时回放 `trace-<runId>.jsonl` 尾部 20 条事件到 `store.messages`，`recentMessages` 不再在重启后凭空消失。
 - **B13 宿主能力（P2）**：不再猜测 DSH 版本写 `engines`；插件启动时探测必需 Service（subagents/sessions/llm）与可选 Service（tokenMeter），缺失时打印可读告警，而不是等工具调用时才报错。
