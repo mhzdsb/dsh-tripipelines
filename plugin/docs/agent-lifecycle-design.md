@@ -137,7 +137,7 @@ Phase 0 引导开机 ──▶ Phase 1 需求访谈 ──▶ Phase 2 适配性�
 |---|---|---|
 | `level1Model` | `deepseek-pro` | L1 模型名（仅用于甜点区档案查询，不切换实际 L1 模型） |
 | `level2Provider` / `level2Model` | `deepseek-official` / `deepseek-flash` | 二级模型 |
-| `level3Model` / `level3Endpoint` | `qwen3.8-27b-gsq-rco-iq3-s-mtp` / `http://127.0.0.1:18200/v1` | 三级本地模型（ninfer，OpenAI 协议） |
+| `level3Model` / `level3Endpoint` | 由配置指定 / **空**（必须显式配置） | 三级本地模型（ninfer，OpenAI 协议）；`level3Provider` 默认 `ninfer-local`，endpoint 用 `/pipe-config` 指向本机引擎 |
 | `maxCodeLines` | `100` | L3 交付代码行数上限 |
 | `maxLevel3Retries` | `5` | L3 最大重试次数 |
 | `maxLevel3Concurrency` | `1` | L3 本地执行器最大并发（ninfer 单实例串行） |

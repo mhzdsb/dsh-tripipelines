@@ -141,7 +141,7 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 |---|---|---|
 | `level1Model` | `deepseek-pro` | 一级模型（仅甜点区档案查询，不切换实际 L1） |
 | `level2Provider` / `level2Model` | `deepseek-official` / `deepseek-flash` | 二级模型 |
-| `level3Model` / `level3Endpoint` | `qwen3.8-27b-gsq-rco-iq3-s-mtp` / `http://127.0.0.1:18200/v1` | 三级本地引擎（OpenAI 协议） |
+| `level3Model` / `level3Endpoint` | 由配置指定 / **空**（必须显式配置） | 三级本地引擎（OpenAI 协议）；`level3Provider` 默认 `ninfer-local`，用 `/pipe-config level3Endpoint http://127.0.0.1:8080/v1` 指向本机引擎 |
 | `level3Engine` | `auto` | 引擎提示（auto/ollama/vllm/llamacpp/openai-compat/other） |
 | `maxCodeLines` | `100` | L3 交付代码行数上限 |
 | `maxLevel3Retries` | `5` | L3 失败最大重试，超限 L2 接管 |

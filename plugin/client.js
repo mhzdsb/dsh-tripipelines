@@ -123,7 +123,7 @@ window.__ModuleLoader__.load({
               userSelect: 'none',
             },
           },
-          idle ? '🔧' : '🔧',
+          idle ? '◫' : '▣',
         )
       }
       if (idle) {
@@ -134,7 +134,7 @@ window.__ModuleLoader__.load({
             title: '流水线待命：用 pipeline_lock_requirements 开始一个开发任务后，这里会显示状态、里程碑与预算',
             style: { ...CARD, opacity: 0.6 },
           },
-          h('div', { style: { ...ROW, color: C.sub } }, '🔧 流水线待命'),
+          h('div', { style: { ...ROW, color: C.sub } }, '◫ 流水线待命'),
         )
       }
       const milestones = snap.milestones || []
