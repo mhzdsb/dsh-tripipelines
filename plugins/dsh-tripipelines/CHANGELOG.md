@@ -2,6 +2,19 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（v114 起为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`），版本号即迭代序号。
 
+## v117 — 1.21.3（知识层文档补全 + 研讨笔记可检索）
+
+### 变更
+- 补上一直存在、但所有文档都没讲清楚的「专题研讨」能力：
+  - README 知识层新增「专题研讨（`/pipe-research`）」小节：知识库如何随开发积累、什么时候该开研讨、7 步议程、三条防呆、结论如何回写。
+  - TUTORIAL 新增 §4.8：把 `/pipe-research` 当「会议议程」用，含证据补齐、回写与检索闭环。
+  - design doc 新增 §18：知识层与专题研讨的设计动机、为什么不做 RAG、刻意没做的自动化。
+  - SKILL.md Phase 0：知识库随 run 增长；瓶颈时用 `/pipe-research`，结论回写后 `pipeline_recall` 可检索。
+- `pipeline_recall` 默认检索目标新增 `knowledge/research/*.md`：此前研讨笔记写进磁盘却检索不到，属于「写死记忆」。
+- 描述文案：`pipeline_recall` 覆盖 research notes；`/pipe-research` 注明笔记可被检索。
+- `dev/smoke/v98_knowledge_smoke.mjs` 新增断言：research 笔记默认参与检索。
+- 无其它运行时行为变化；版本 1.21.2 → 1.21.3。
+
 ## v116 — 1.21.2（仓库布局：包移到 plugins/dsh-tripipelines/，满足 market catalog CI）
 
 ### 变更

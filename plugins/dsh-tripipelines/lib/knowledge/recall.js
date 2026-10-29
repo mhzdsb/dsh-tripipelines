@@ -3,6 +3,8 @@
  *
  * Keyword search over the artifacts `pipeline_scan` / `pipeline_ledger` produced,
  * so an L1 can pull the 3–5 relevant lines instead of reading whole files.
+ * v117: research notes written by `/pipe-research` are indexed by default too,
+ * so a past 专题研讨 stays findable instead of becoming write-only memory.
  * Plain substring matching on purpose: no embeddings, no index to keep in sync,
  * and the result is auditable (every hit carries its source path + line number).
  */
@@ -77,6 +79,12 @@ export function recall({ knowledgeDir, query, limit = 6, files }) {
     const modDir = join(knowledgeDir, 'modules')
     if (existsSync(modDir)) {
       try { for (const name of readdirSync(modDir)) if (name.endsWith('.md') && name !== '_index.md') push(join('modules', name)) } catch { /* best-effort */ }
+    }
+    // v117 — `/pipe-research` notes: a decision meeting that cannot be recalled is
+    // write-only memory, so include them in the default search targets.
+    const researchDir = join(knowledgeDir, 'research')
+    if (existsSync(researchDir)) {
+      try { for (const name of readdirSync(researchDir)) if (name.endsWith('.md')) push(join('research', name)) } catch { /* best-effort */ }
     }
   }
   const hits = []

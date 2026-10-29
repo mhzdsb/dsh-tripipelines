@@ -1,6 +1,6 @@
 {
   "name": "dsh-tripipelines",
-  "version": "1.21.2",
+  "version": "1.21.3",
   "description": "Three-tier model collaboration plugin for DeepSeek Harness: L1 coordinator (any model the user picks) -> L2 module leads (model configured per module) -> L3 (local engine) executors, with strict adjacency, long-lived L2, per-task acceptance, quality gates, per-workspace run state, per-module work directories, and a live GUI status board.",
   "author": "merhentz",
   "keywords": [

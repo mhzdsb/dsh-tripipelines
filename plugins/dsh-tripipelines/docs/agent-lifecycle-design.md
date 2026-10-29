@@ -256,3 +256,17 @@ L1 是唯一协调者（唯一和用户对话、唯一终审），因此有单�
 **刻意没做（留给 v90）**：作用域「硬拦」（DSH 的 write 工具不在插件控制内，硬拦需要工具层 patch，暂以 L1 声明 + 事后审计代替——`filesTouched` 已记录）；自动 checkpoint 写文件（改为最后一个里程碑验收后**提示** L1 调 `pipeline_checkpoint`，避免自动覆盖人工交接文档）。
 
 **测试**：`dev/smoke/v89_control_smoke.mjs`（49 断言：配置键 / run 状态机 / 里程碑计算 / 预算暂停 / 冷启动恢复 / 断言并发隔离）+ `dev/smoke/verify-v82.mjs`（73 断言回归）+ `dev/smoke/skill_sync_check.mjs`（SKILL.md 与 SKILL_BODY 字节一致）。
+
+## 18. 知识层与专题研讨（v98 / v117）
+
+**问题**：L1 最大的浪费是「为了理解项目而把仓库读一遍」；第二浪费是「同一个架构问题三个月后重新吵一遍」。
+
+**知识层（机械抽取，0 模型调用）**：`pipeline_scan` 产出 `knowledge/index.md`（一页骨架）+ `modules/<模块>.md`（每模块一页：角色 / 入口 / 公开接口 / 依赖 / 信号）+ `map.json`（符号与 sha8）+ `hashes.json`；`pipeline_scan({check:true})` 只做陈旧检测；`pipeline_ledger` 从交接文档抽取决策候选并按 KEEP/REVIEW/DROP 分诊；`pipeline_recall` 做纯子串检索（中文按 bigram 切词），命中带 `file:line`，检不到返回 no hits，不编造。
+
+**为什么不是 RAG**：没有 embedding、没有索引同步、没有模型调用；产物是 md + json，人可读、可 diff、可审计；token 成本只有「读命中片段」这一项。语义判断留给拿到证据之后的模型，而不是提前烧在索引上。
+
+**专题研讨（`/pipe-research`）**：开发遇到瓶颈（架构摇摆、二选一、反复返工、性能/兼容性取舍）时，命令在工作区 `knowledge/research/<日期>-<议题>.md` 生成 7 步研讨骨架（立项 / 证据 / 候选 / 反方 / 最小实验 / 建议 / 记录），内置三条防呆：无数值的理由无效、带指针证据 ≥3 条、必须回答「错了会怎么暴露」。它不是自动决策器，而是把「讨论」变成可回查的 artifact。
+
+**闭环**：研讨结论写回 `decisions.md` 或 checkpoint 的决策节；v117 起 `pipeline_recall` 默认把 `research/*.md` 纳入检索目标，于是「研讨 → 决策 → 未来检索」形成闭环，而不是写进文件就烂掉。
+
+**刻意没做**：自动触发研讨（阈值难以验证，目前手动跑 2~3 次再评估）；自动判定研讨质量（模型自评不可靠，靠第 7 步的「错了会怎么暴露」约束）。

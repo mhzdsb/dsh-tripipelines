@@ -84,6 +84,15 @@ try {
   ok('recall handles Chinese query', hit2.hits.length > 0)
   const hit3 = recall({ knowledgeDir: out, query: 'zzz-no-such-term-zzz' })
   ok('recall returns no false hits', hit3.hits.length === 0)
+
+  // --- research notes (v117) -------------------------------------------------
+  mkdirSync(join(out, 'research'), { recursive: true })
+  writeFileSync(
+    join(out, 'research', '2026-10-29-path.md'),
+    '# 研讨：下一步投哪条路径\n\n## 2. 证据\n- E1 见 bench/result.json:12，吞吐提升 1.8x\n',
+  )
+  const hit4 = recall({ knowledgeDir: out, query: '吞吐' })
+  ok('recall indexes research notes by default', hit4.hits.some((h) => h.source.startsWith('research/')), JSON.stringify(hit4.hits.slice(0, 2)))
 } finally {
   try { rmSync(root, { recursive: true, force: true }) } catch {}
 }

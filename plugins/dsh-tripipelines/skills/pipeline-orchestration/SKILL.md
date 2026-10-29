@@ -17,6 +17,10 @@ Taking over an EXISTING repo — read knowledge, not the whole tree (v98/v99):
 - pipeline_ledger once → triaged candidates (KEEP / REVIEW / DROP); classify only the KEEP list into `decisions.md`.
 - Before asking the user anything the repo may answer: pipeline_recall("<keywords>") and cite the source line.
 - Secret files (.env, *.key, *.pem) are never read by the scanner — do not read them yourself either.
+- Knowledge grows with the run: scan keeps index + module pages fresh, ledger keeps the decision ledger.
+- At a bottleneck (architecture thrash, a two-way choice, repeated rework): /pipe-research "<topic>" →
+  7-step note (evidence → candidates → counter-case → experiment → verdict). Fill it, write the verdict
+  into decisions.md / checkpoint, and pipeline_recall finds it later (research notes are indexed since v117).
 
 
 ## Phase 1 — Requirement interview (popup, multi-round)

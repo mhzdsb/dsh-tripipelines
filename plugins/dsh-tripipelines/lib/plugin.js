@@ -328,7 +328,7 @@ function apply(ctx, config) {
 
   ctx.commands.register({
     name: 'pipe-research',
-    description: 'open a structured research note (7 steps + anti-laziness rules) for a hard decision',
+    description: 'open a structured research note (7 steps + anti-laziness rules) for a hard decision; the note lands in knowledge/research/ and is searchable by pipeline_recall',
     input: { hint: '<议题，例如：下一步投哪条路径>' },
     handler: (invocation) => {
       const entry = registry.resolve(invocation)

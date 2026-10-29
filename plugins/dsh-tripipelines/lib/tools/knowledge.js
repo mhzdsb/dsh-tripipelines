@@ -115,7 +115,7 @@ export function makeLedgerTool(ctx, cfg, r) {
 export function makeRecallTool(ctx, cfg, r) {
   return {
     name: 'pipeline_recall',
-    description: 'Keyword search over the knowledge base; returns file:line hits.',
+    description: 'Keyword search over the knowledge base (index / decisions / module pages / research notes); returns file:line hits.',
     parameters: {
       type: 'object',
       additionalProperties: false,
