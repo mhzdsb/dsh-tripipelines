@@ -14,27 +14,27 @@ const check = (label, cond, extra) => {
 }
 
 const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js']
-for (const f of flat) copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
+for (const f of flat) copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 mkdirSync(join(tmp, 'knowledge'), { recursive: true })
 for (const f of ['knowledge/scan.js', 'knowledge/ledger.js', 'knowledge/recall.js']) {
-  copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
+  copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 }
-for (const f of ['l1.js', 'l2l3.js', 'knowledge.js']) copyFileSync(new URL('plugin/lib/tools/' + f, root), join(tmp, 'tools', f))
+for (const f of ['l1.js', 'l2l3.js', 'knowledge.js']) copyFileSync(new URL('plugins/dsh-tripipelines/lib/tools/' + f, root), join(tmp, 'tools', f))
 
-const cfgSrc = readFileSync(new URL('plugin/lib/config.js', root), 'utf8')
+const cfgSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', root), 'utf8')
   .replace(
     "export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')",
     `export const CONFIG_FILE = ${JSON.stringify(join(tmp, 'config.json').replace(/\\/g, '/'))}`,
   )
 writeFileSync(join(tmp, 'config.js'), cfgSrc, 'utf8')
-const stSrc = readFileSync(new URL('plugin/lib/store.js', root), 'utf8')
+const stSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8')
   .replace(
     "return join(process.cwd(), '.dsh', 'pipeline')",
     `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
   )
 writeFileSync(join(tmp, 'store.js'), stSrc, 'utf8')
-copyFileSync(new URL('plugin/lib/plugin.js', root), join(tmp, 'plugin.js'))
+copyFileSync(new URL('plugins/dsh-tripipelines/lib/plugin.js', root), join(tmp, 'plugin.js'))
 
 const imp = (rel) => import(pathToFileURL(join(tmp, rel)).href)
 const cfgMod = await imp('config.js')

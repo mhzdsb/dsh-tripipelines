@@ -26,7 +26,7 @@ import { spawnSync } from 'node:child_process'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const repoRoot = join(here, '..')
-const pluginDir = join(repoRoot, 'plugin')
+const pluginDir = join(repoRoot, 'plugins', 'dsh-tripipelines')
 const smokeDir = join(repoRoot, 'dev', 'smoke')
 const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
 const snapshotsRoot = join(home, '.dsh')

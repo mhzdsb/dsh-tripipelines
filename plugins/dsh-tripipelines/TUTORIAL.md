@@ -73,7 +73,7 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 
 ### 2.1 桌面端（当前运行的应用）
 
-本仓库的发布脚本会把 `plugin/` 复制为 `~/.dsh/dsh-tripipelines-vNN` 快照再安装；实际装的是哪个版本，以插件管理器 `list_plugins` 的显示为准（版本号见 `package.json`）。已装好就跳到第 4 节；升级见第 7 节。
+本仓库的发布脚本会把 `plugins/dsh-tripipelines/` 复制为 `~/.dsh/dsh-tripipelines-vNN` 快照再安装；实际装的是哪个版本，以插件管理器 `list_plugins` 的显示为准（版本号见 `package.json`）。已装好就跳到第 4 节；升级见第 7 节。
 
 > 说明：包名带 `-vN` 后缀是为了绕过 Electron 进程的模块缓存——**每次改代码都要复制到新目录、把包名 `-vN` 加 1、再重装**（install 新版 → remove 旧版 → 对新版 enable/disable 一次）。只改目录不改包名，DSH 仍会加载旧缓存。
 

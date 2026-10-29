@@ -2,14 +2,14 @@
 import { readFileSync } from 'node:fs'
 
 const root = new URL('../../', import.meta.url)
-const src = readFileSync(new URL('plugin/lib/prompts.js', root), 'utf8')
+const src = readFileSync(new URL('plugins/dsh-tripipelines/lib/prompts.js', root), 'utf8')
 const m = src.match(/export const SKILL_BODY = `([\s\S]*?)`\n\n\/\/ -{10,}/)
 if (!m) {
   console.log('FAIL  could not extract SKILL_BODY')
   process.exit(1)
 }
 const body = m[1]
-const disk = readFileSync(new URL('plugin/skills/pipeline-orchestration/SKILL.md', root), 'utf8').replace(/\r\n/g, '\n')
+const disk = readFileSync(new URL('plugins/dsh-tripipelines/skills/pipeline-orchestration/SKILL.md', root), 'utf8').replace(/\r\n/g, '\n')
 // SKILL_BODY lives inside a template literal, so the sync step escapes ` $ \ .
 // Undo exactly those three escapes before comparing, otherwise every backtick
 // in the skill (tool names, paths) shows up as a false diff.

@@ -15,8 +15,8 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
-const { executeAcceptance, gateSubtask, gateTask, extractAssertions } = await import(pathToFileURL(join(repoRoot, 'plugin/lib/gates.js')).href)
-const { strictAdjacencyDenial } = await import(pathToFileURL(join(repoRoot, 'plugin/lib/guards.js')).href)
+const { executeAcceptance, gateSubtask, gateTask, extractAssertions } = await import(pathToFileURL(join(repoRoot, 'plugins/dsh-tripipelines/lib/gates.js')).href)
+const { strictAdjacencyDenial } = await import(pathToFileURL(join(repoRoot, 'plugins/dsh-tripipelines/lib/guards.js')).href)
 
 const tmp = mkdtempSync(join(tmpdir(), 'dsh-v104-'))
 let passed = 0

@@ -19,21 +19,21 @@ const check = (label, cond, extra) => {
 }
 
 const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js']
-for (const f of flat) copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
+for (const f of flat) copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
-for (const f of ['l1.js', 'l2l3.js']) copyFileSync(new URL('plugin/lib/tools/' + f, root), join(tmp, 'tools', f))
+for (const f of ['l1.js', 'l2l3.js']) copyFileSync(new URL('plugins/dsh-tripipelines/lib/tools/' + f, root), join(tmp, 'tools', f))
 
-const cfgSrc = readFileSync(new URL('plugin/lib/config.js', root), 'utf8').replace(
+const cfgSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', root), 'utf8').replace(
   "export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')",
   `export const CONFIG_FILE = ${JSON.stringify(join(tmp, 'config.json').replace(/\\/g, '/'))}`,
 )
 writeFileSync(join(tmp, 'config.js'), cfgSrc, 'utf8')
-const stSrc = readFileSync(new URL('plugin/lib/store.js', root), 'utf8').replace(
+const stSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8').replace(
   "return join(root ?? process.cwd(), '.dsh', 'pipeline')",
   `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
 )
 writeFileSync(join(tmp, 'store.js'), stSrc, 'utf8')
-copyFileSync(new URL('plugin/lib/plugin.js', root), join(tmp, 'plugin.js'))
+copyFileSync(new URL('plugins/dsh-tripipelines/lib/plugin.js', root), join(tmp, 'plugin.js'))
 
 const imp = (rel) => import(pathToFileURL(join(tmp, rel)).href)
 const cfgMod = await imp('config.js')
@@ -176,7 +176,7 @@ check('default scope dir created', existsSync(resolve(join('.dsh', 'pipeline', '
 // ---------------------------------------------------------------------------
 // 4. client bundle wiring (static)
 // ---------------------------------------------------------------------------
-const clientSrc = readFileSync(new URL('plugin/client.js', root), 'utf8')
+const clientSrc = readFileSync(new URL('plugins/dsh-tripipelines/client.js', root), 'utf8')
 check('client loader declares package id', clientSrc.includes("id: 'dsh-tripipelines'"))
 check('client registers sidebar.footer.action', clientSrc.includes("'sidebar.footer.action'"))
 check('client keeps a single board id (no probes)', !clientSrc.includes('pipeline-probe') && (clientSrc.match(/'pipeline-board'/g) || []).length === 1)
@@ -184,16 +184,16 @@ check('client has exactly one seat (no composer strip, no floating card)', !clie
 check('client polls /pipeline/board', clientSrc.includes("'/pipeline/board'") && clientSrc.includes('workspace='))
 check('client keeps an idle posture', clientSrc.includes("=== 'idle'"))
 check('client uses theme tokens', clientSrc.includes('--dsw-alias-'))
-const pkg = JSON.parse(readFileSync(new URL('plugin/package.json', root), 'utf8'))
+const pkg = JSON.parse(readFileSync(new URL('plugins/dsh-tripipelines/package.json', root), 'utf8'))
 check('package.json exports ./client', pkg.exports?.['./client'] === './client.js')
 check('package.json ships client.js', Array.isArray(pkg.files) && pkg.files.includes('client.js'))
 check('package.json declares dsh.client', pkg.dsh?.client?.platform === 'web' && pkg.dsh?.client?.immediately === true)
-const pluginMainSrc = readFileSync(new URL('plugin/lib/plugin.js', root), 'utf8')
+const pluginMainSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/plugin.js', root), 'utf8')
 check('plugin creates per-workspace stores (v103)', pluginMainSrc.includes('createWorkspaceRegistry'))
-check('route handler has a build tag', readFileSync(new URL('plugin/lib/board-route.js', root), 'utf8').includes('BUILD_TAG'))
+check('route handler has a build tag', readFileSync(new URL('plugins/dsh-tripipelines/lib/board-route.js', root), 'utf8').includes('BUILD_TAG'))
 // v96 — module-count nudges: soft hints on plan + spawn, and a sizing guide in the skill.
-const l1Src = readFileSync(new URL('plugin/lib/tools/l1.js', root), 'utf8')
-const skillSrc = readFileSync(new URL('plugin/skills/pipeline-orchestration/SKILL.md', root), 'utf8')
+const l1Src = readFileSync(new URL('plugins/dsh-tripipelines/lib/tools/l1.js', root), 'utf8')
+const skillSrc = readFileSync(new URL('plugins/dsh-tripipelines/skills/pipeline-orchestration/SKILL.md', root), 'utf8')
 check('plan returns a module-count hint', l1Src.includes('planHint'))
 check('plan hint targets collapsed plans', l1Src.includes('tasks.length >= 3') && l1Src.includes('assignees.length === 1'))
 check('spawn returns an unspawned-module hint', l1Src.includes('spawnHint'))
@@ -203,8 +203,8 @@ check('skill keeps the single-file fast path', skillSrc.includes('single-file') 
 
 // v101c — context readout must use surfaceTokens (what the model sees), never the
 // cumulative session-log total; otherwise the strip shows absurd ratios like 3290%.
-const brSrc = readFileSync(new URL('plugin/lib/board-route.js', root), 'utf8')
-const compatSrc = readFileSync(new URL('plugin/lib/dsh-compat.js', root), 'utf8')
+const brSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/board-route.js', root), 'utf8')
+const compatSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/dsh-compat.js', root), 'utf8')
 check('agent token read prefers surfaceTokens', brSrc.includes('measurement?.surfaceTokens ?? measurement?.totalTokens'))
 check('level1 read uses the tail-window estimate', compatSrc.includes('tailSurfaceTokens') && !compatSrc.includes('m.surfaceTokens ?? m.totalTokens'))
 const { measureAgentTokens } = await imp('board-route.js')

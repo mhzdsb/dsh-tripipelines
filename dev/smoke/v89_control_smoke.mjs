@@ -1,5 +1,5 @@
 // v89 verification: control plane + run state machine.
-// Loads a patched COPY of plugin/lib/plugin.js (temp state dir + internal exports)
+// Loads a patched COPY of plugins/dsh-tripipelines/lib/plugin.js (temp state dir + internal exports)
 // and asserts the v89 contracts:
 //  1) new config keys exist in DEFAULT_CONFIG AND CONFIG_KEYS
 //  2) run state machine: idle -> active, saveRun persists run.json
@@ -33,13 +33,13 @@ function check(label, cond, extra) {
 // v90 split: the store/gates modules own the tested helpers now. Copy them next to
 // patched copies (config gets a temp CONFIG_FILE, store a temp runtime state dir).
 for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js']) {
-  copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
+  copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 }
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 for (const f of ['l1.js', 'l2l3.js']) {
-  copyFileSync(new URL('plugin/lib/tools/' + f, root), join(tmp, 'tools', f))
+  copyFileSync(new URL('plugins/dsh-tripipelines/lib/tools/' + f, root), join(tmp, 'tools', f))
 }
-const configSrc = readFileSync(new URL('plugin/lib/config.js', root), 'utf8')
+const configSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', root), 'utf8')
 const patchedConfig = configSrc.replace(
   "export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')",
   `export const CONFIG_FILE = ${JSON.stringify(join(tmp, 'config.json').replace(/\\/g, '/'))}`,
@@ -49,7 +49,7 @@ if (patchedConfig === configSrc) {
   process.exit(1)
 }
 writeFileSync(join(tmp, 'config.js'), patchedConfig, 'utf8')
-const storeSrc = readFileSync(new URL('plugin/lib/store.js', root), 'utf8')
+const storeSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8')
 const patchedStore = storeSrc.replace(
   "return join(root ?? process.cwd(), '.dsh', 'pipeline')",
   `return ${JSON.stringify(tmpState)}`,

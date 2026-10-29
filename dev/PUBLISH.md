@@ -56,18 +56,17 @@ npm publish --registry=https://registry.npmjs.org        # 发布必须直连官
 
 如果连 registry 都不通（公司代理/证书）：`npm config set proxy http://127.0.0.1:7890` + `npm config set https-proxy http://127.0.0.1:7890`；自签证书用 `NODE_EXTRA_CA_CERTS`。
 
-## 2. 关键：catalog 的目录结构要求
+## 2. catalog 的目录结构要求（已按方案 B 落地）
 
-catalog CI 要求 `dsh.bundle` 出现在**仓库根 `package.json`**，或 `packages/`、`plugins/`、`apps/` 下的子包。**我们现在的包在 `plugin/`（单数），会被 CI 拒绝。** 三选一：
+catalog CI 要求 `dsh.bundle` 出现在**仓库根 `package.json`**，或 `packages/`、`plugins/`、`apps/` 下的子包。
 
-- **方案 A（推荐，单插件仓库）：把包放到仓库根**
-  `package.json` / `lib/` / `client.js` / `skills/` / `cordis.patch.yml` 在根；`dev/` 留在根下（`files` 不含它，不会发到 npm）。
-  需要改：`scripts.test` 路径、`dev/smoke/*.mjs` 的 repoRoot 引用、`dev/release.mjs` 的源目录、`.gitignore`、README 里 `plugin/` 路径。
-- **方案 B（改动小）：`plugin/` → `plugins/dsh-tripipelines/`**
-  只改路径深度（测试脚本 `../../dev/smoke`，release.mjs 源目录，README 路径）。
-- **方案 C：保持现状，另建公开分发仓库**，根目录 = 插件包内容（release 快照），开发仓库保持私有。多一套同步成本。
+本仓库现在采用**方案 B**：插件包在 `plugins/dsh-tripipelines/`，开发工具（`dev/`：测试、release、preflight、文档）留在仓库根。CI 的 `plugins/<子包>/package.json` 规则直接命中。
 
-不确定选哪个就先别上传——选 A 或 B 我可以直接改好并跑通 12 套测试。
+因此：
+- 插件相关命令都在 `plugins/dsh-tripipelines/` 下执行（`npm test` 会跑 `../../dev/smoke/*.mjs`）。
+- 发布脚本 `dev/release.mjs` 的源目录是 `plugins/dsh-tripipelines/`，快照仍写到 `~/.dsh/dsh-tripipelines-vNN`。
+- 仓库根不需要 `package.json`；`dev/preflight.mjs` 会校验包位置合法。
+
 
 ## 3. 发布到 npm
 
@@ -143,8 +142,8 @@ url: https://github.com/<你的用户名>/dsh-tripipelines
 name: <你的用户名>/dsh-tripipelines
 category: Tools            # 从仓库 README 的分类表里选，主题类只给主题插件
 description:
-  en: "Three-tier model collaboration for DSH: an L1 coordinator, flash L2 module leads and local L3 executors, with strict tier adjacency, per-subtask acceptance gates and a live status board."
-  zh: "三层模型协作：L1 统筹、flash L2 模块负责人、本地 L3 执行器，严格分层调度、逐子任务验收门与实时看板。"
+  en: "Three-tier model collaboration for DSH: an L1 coordinator (the model you pick), L2 module leads on their configured model, and local L3 executors, with strict tier adjacency, per-subtask acceptance gates and a live status board."
+  zh: "三层模型协作：L1 统筹（你在会话里选的模型）、L2 模块负责人（默认配置模型，可按模块覆盖）、本地 L3 执行器，严格分层调度、逐子任务验收门与实时看板。"
 # icon: https://...   # 可选，图片必须公网可访问
 ```
 
@@ -155,7 +154,7 @@ CI 会检查：`url` 与仓库完全一致、`name` 为 `owner/repo`、`descript
 ## 6. 常见坑
 
 - 仓库年龄 <1 天：CI 直接拒，建完仓库隔天再提 PR。
-- `plugin/`（单数）目录名：见第 2 节，CI 不认。
+- 包目录放错：单插件仓库应使用仓库根或 `packages|plugins|apps/<子包>/`；本仓库已按 `plugins/dsh-tripipelines/` 放好，`preflight.mjs` 会校验。
 - 忘记 `npm publish` 只推了 GitHub：market 按 npm 版本判断更新，用户装到的可能是旧版本甚至装不上。
 - `files` 里漏了 `skills/` 或 `cordis.patch.yml`：安装后插件能加载但 skill/board 异常，`preflight.mjs` 会检查。
 - README 链接到仓库内文档：仓库未公开前这些链接在 npm 页面是断的，公开后自动生效。

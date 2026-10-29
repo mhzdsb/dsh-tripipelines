@@ -1,5 +1,5 @@
 // v82 verification: sweet-spot model adaptation + project-level config.
-// Loads a patched COPY of plugin/lib/plugin.js (temp CONFIG_FILE + extra exports)
+// Loads a patched COPY of plugins/dsh-tripipelines/lib/plugin.js (temp CONFIG_FILE + extra exports)
 // so no real user config/state is touched, then asserts the v82 contracts:
 //  1) new keys exist in DEFAULT_CONFIG AND CONFIG_KEYS; boolean coerce works
 //  2) v81 back-compat: defaults for the 3 sweet-spot keys + all other keys unchanged
@@ -30,17 +30,17 @@ function check(label, cond, extra) {
 // v90 split: plugin.js now depends on sibling modules — copy them all next to the
 // patched copies (config gets a temp CONFIG_FILE, store a temp state dir).
 for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js']) {
-  copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
+  copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 }
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 mkdirSync(join(tmp, 'knowledge'), { recursive: true })
 for (const f of ['knowledge/scan.js', 'knowledge/ledger.js', 'knowledge/recall.js']) {
-  copyFileSync(new URL('plugin/lib/' + f, root), join(tmp, f))
+  copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 }
 for (const f of ['l1.js', 'l2l3.js', 'knowledge.js']) {
-  copyFileSync(new URL('plugin/lib/tools/' + f, root), join(tmp, 'tools', f))
+  copyFileSync(new URL('plugins/dsh-tripipelines/lib/tools/' + f, root), join(tmp, 'tools', f))
 }
-const configSrc = readFileSync(new URL('plugin/lib/config.js', root), 'utf8')
+const configSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', root), 'utf8')
 const patched = configSrc.replace(
   "export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')",
   `export const CONFIG_FILE = ${JSON.stringify(tmpConfig)}`,
@@ -50,7 +50,7 @@ if (patched === configSrc) {
   process.exit(1)
 }
 writeFileSync(join(tmp, 'config.js'), patched, 'utf8')
-const storeSrc = readFileSync(new URL('plugin/lib/store.js', root), 'utf8')
+const storeSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8')
 const storePatched = storeSrc.replace(
   "return join(root ?? process.cwd(), '.dsh', 'pipeline')",
   `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
@@ -60,7 +60,7 @@ if (storePatched === storeSrc) {
   process.exit(1)
 }
 writeFileSync(join(tmp, 'store.js'), storePatched, 'utf8')
-copyFileSync(new URL('plugin/lib/plugin.js', root), join(tmp, 'plugin.js'))
+copyFileSync(new URL('plugins/dsh-tripipelines/lib/plugin.js', root), join(tmp, 'plugin.js'))
 const mod = await import(pathToFileURL(join(tmp, 'config.js')).href)
 const pluginMod = await import(pathToFileURL(join(tmp, 'plugin.js')).href)
 

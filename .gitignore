@@ -5,8 +5,8 @@ node_modules/
 .dsh/
 
 # test residue produced by dev/smoke/v92 and friends
-plugin/.dsh/
-plugin/src/
+plugins/dsh-tripipelines/.dsh/
+plugins/dsh-tripipelines/src/
 /src/
 
 # local backups and probes

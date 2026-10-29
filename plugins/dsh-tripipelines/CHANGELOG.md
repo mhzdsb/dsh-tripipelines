@@ -2,6 +2,13 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（v114 起为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`），版本号即迭代序号。
 
+## v116 — 1.21.2（仓库布局：包移到 plugins/dsh-tripipelines/，满足 market catalog CI）
+
+### 变更
+- 仓库结构调整：插件包从 plugin/ 移到 **plugins/dsh-tripipelines/**；dev/（测试、release、preflight、文档）留在仓库根。catalog CI 只认根 package.json 或 packages|plugins|apps/<子包>/package.json。
+- 路径同步：scripts.test 改为 ../../dev/smoke/*.mjs；dev/smoke/*.mjs、dev/release.mjs、dev/preflight.mjs、dev/_sync_skill.mjs 的源目录与 repoRoot 引用；.gitignore；README/TUTORIAL 中的仓库路径。
+- 无运行时行为变化；版本 1.21.1 → 1.21.2。
+
 ## v115 — 1.21.1（措辞：不再把层级和具体模型绑定）
 
 ### 变更

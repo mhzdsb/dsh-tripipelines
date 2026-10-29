@@ -3,9 +3,9 @@
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
-import { scanRepo, buildModulePages } from '../../plugin/lib/knowledge/scan.js'
-import { extractDecisions } from '../../plugin/lib/knowledge/ledger.js'
-import { recall } from '../../plugin/lib/knowledge/recall.js'
+import { scanRepo, buildModulePages } from '../../plugins/dsh-tripipelines/lib/knowledge/scan.js'
+import { extractDecisions } from '../../plugins/dsh-tripipelines/lib/knowledge/ledger.js'
+import { recall } from '../../plugins/dsh-tripipelines/lib/knowledge/recall.js'
 
 let passed = 0
 let failed = 0

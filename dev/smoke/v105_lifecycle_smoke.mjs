@@ -13,9 +13,9 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
-const { createStore } = await import(pathToFileURL(join(repoRoot, 'plugin/lib/store.js')).href)
-const { makePlanTool, makeAcceptMilestoneTool, makeDrainLeadsTool, makeSpawnModuleLeadTool } = await import(pathToFileURL(join(repoRoot, 'plugin/lib/tools/l1.js')).href)
-const { makeDecomposeTool, makeRegisterOutputTool } = await import(pathToFileURL(join(repoRoot, 'plugin/lib/tools/l2l3.js')).href)
+const { createStore } = await import(pathToFileURL(join(repoRoot, 'plugins/dsh-tripipelines/lib/store.js')).href)
+const { makePlanTool, makeAcceptMilestoneTool, makeDrainLeadsTool, makeSpawnModuleLeadTool } = await import(pathToFileURL(join(repoRoot, 'plugins/dsh-tripipelines/lib/tools/l1.js')).href)
+const { makeDecomposeTool, makeRegisterOutputTool } = await import(pathToFileURL(join(repoRoot, 'plugins/dsh-tripipelines/lib/tools/l2l3.js')).href)
 
 const tmp = mkdtempSync(join(tmpdir(), 'dsh-v105-'))
 let passed = 0

@@ -118,7 +118,7 @@ function statusOf(h, sessionId) {
 
 try {
   // Work on a throwaway copy so the test never reads the user's saved config.
-  cpSync(join(repoRoot, 'plugin', 'lib'), libDir, { recursive: true })
+  cpSync(join(repoRoot, 'plugins', 'dsh-tripipelines', 'lib'), libDir, { recursive: true })
   const cfgPath = join(libDir, 'config.js')
   const cfgSrc = readFileSync(cfgPath, 'utf8')
   writeFileSync(
@@ -244,7 +244,7 @@ try {
   // there. v108/v109 persisted the pick in localStorage, which pinned the card to
   // a stale project across switches; the legacy key must stay cleared and the
   // picker must offer a "follow" entry.
-  const clientSrc = readFileSync(join(repoRoot, 'plugin', 'client.js'), 'utf8')
+  const clientSrc = readFileSync(join(repoRoot, 'plugins', 'dsh-tripipelines', 'client.js'), 'utf8')
   check('client reads the main-view session cwd', clientSrc.includes('retainedBy') && clientSrc.includes('mainView') && clientSrc.includes('cwd'), '')
   check('client offers a follow-current-workspace entry', clientSrc.includes('跟随当前工作区'), '')
   check('client clears the legacy persisted pick', clientSrc.includes('removeItem') && !clientSrc.includes('localStorage.setItem'), '')

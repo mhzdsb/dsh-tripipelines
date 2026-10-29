@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
-const load = (p) => import(pathToFileURL(join(repoRoot, 'plugin/lib', p)).href)
+const load = (p) => import(pathToFileURL(join(repoRoot, 'plugins/dsh-tripipelines/lib', p)).href)
 const { estimateTokens, numCfg } = await load('util.js')
 const { validateConfigValue, CONFIG_KEYS, DEFAULT_CONFIG } = await load('config.js')
 const { withRunFooter, setResultFooter, strictAdjacencyDenial } = await load('guards.js')

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
-const pkgDir = process.argv[2] ? resolve(process.argv[2]) : join(repoRoot, 'plugin')
+const pkgDir = process.argv[2] ? resolve(process.argv[2]) : join(repoRoot, 'plugins', 'dsh-tripipelines')
 const pkgPath = join(pkgDir, 'package.json')
 
 const blockers = []
