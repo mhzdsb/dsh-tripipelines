@@ -58,11 +58,14 @@ window.__ModuleLoader__.load({
       return v >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')}K` : String(v)
     }
 
-    function useBoard() {
+    function useBoard(workspaceKey) {
       const [snap, setSnap] = React.useState(null)
       React.useEffect(() => {
         let alive = true
         let timer = 0
+        const url = workspaceKey
+          ? `/pipeline/board?workspace=${encodeURIComponent(workspaceKey)}`
+          : '/pipeline/board'
         const schedule = () => {
           if (alive) timer = setTimeout(tick, POLL_MS)
         }
@@ -72,7 +75,7 @@ window.__ModuleLoader__.load({
             return
           }
           try {
-            const res = await fetch('/pipeline/board', { cache: 'no-store' })
+            const res = await fetch(url, { cache: 'no-store' })
             if (!alive) return
             // v106: keep the last good snapshot on a failed poll. A cold daemon with no
             // workspace store yet used to answer 404 here, and nulling the snapshot made
@@ -92,8 +95,40 @@ window.__ModuleLoader__.load({
           alive = false
           if (timer) clearTimeout(timer)
         }
-      }, [])
+      }, [workspaceKey])
       return snap
+    }
+
+    // v108 — workspace switcher. It only appears when the daemon knows more than
+    // one project; picking one re-points the poll at ?workspace=<key>, and the
+    // host loads that project's store from disk on demand.
+    function workspacePicker(snap, picked, onPick) {
+      const list = Array.isArray(snap && snap.workspaces) ? snap.workspaces : []
+      if (list.length < 2) return null
+      const current = picked || (list.find((w) => w.active) || list[0]).key
+      return h(
+        'select',
+        {
+          'aria-label': '切换工作区',
+          title: '切换看板显示的工作区',
+          value: current,
+          onChange: (e) => onPick(e.target.value || null),
+          style: {
+            maxWidth: 132,
+            marginLeft: 'auto',
+            fontSize: 10,
+            lineHeight: '14px',
+            color: C.sub,
+            background: 'transparent',
+            border: '1px solid var(--dsw-alias-border-l1)',
+            borderRadius: 4,
+            padding: '1px 2px',
+            cursor: 'pointer',
+            flex: 'none',
+          },
+        },
+        list.map((w) => h('option', { key: w.key, value: w.key }, `${w.name}${w.active ? ' · 当前' : ''}`)),
+      )
     }
 
     // The sidebar card: muted "待命" block before any run (still proves the plugin is
@@ -101,7 +136,8 @@ window.__ModuleLoader__.load({
     // L2s below. Hovering shows the full detail (run id, milestones, L2s, recent events).
     function PipelineBoard(props) {
       const wide = !props || props.wide !== false
-      const snap = useBoard()
+      const [picked, setPicked] = React.useState(null)
+      const snap = useBoard(picked)
       if (!snap || !snap.run) return null
       const run = snap.run
       const idle = !run.status || run.status === 'idle'
@@ -135,6 +171,7 @@ window.__ModuleLoader__.load({
             style: { ...CARD, opacity: 0.6 },
           },
           h('div', { style: { ...ROW, color: C.sub } }, '◫ 流水线待命'),
+          workspacePicker(snap, picked, setPicked),
         )
       }
       const milestones = snap.milestones || []
@@ -406,6 +443,7 @@ window.__ModuleLoader__.load({
               `${fmtCount(budget.tokensUsed || 0)}/${fmtCount(budget.maxTokens || 0)}`,
             ),
           ),
+          workspacePicker(snap, picked, setPicked),
         ),
         // Divider: the title block ends here; everything below is the level board.
         h('div', { style: { height: 1, background: 'rgba(255,255,255,.08)', margin: '7px 0 1px' } }),

@@ -1,6 +1,6 @@
 {
   "name": "dsh-pipeline",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "description": "Three-tier model collaboration plugin for DeepSeek Harness: L1 coordinator (any model the user picks) -> L2 (flash) module leads -> L3 (local engine) executors, with strict adjacency, long-lived L2, per-task acceptance, quality gates, per-workspace run state, per-module work directories, and a live GUI status board.",
   "author": "merhentz",
   "type": "module",

@@ -14,14 +14,56 @@
 // Creation is lazy: nothing is created or read until a tool/command/board
 // request actually names a workspace. No token is spent here: restoring a
 // store is local file I/O only.
-import { existsSync, realpathSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { createStore } from './store.js'
 import { resolveSession } from './dsh-compat.js'
 
 const WINDOWS = process.platform === 'win32'
 const MAX_WALK = 32
+const MAX_KNOWN = 32
+
+// v108 — the board card can switch workspaces. The registry remembers every
+// project it has served (paths only, never content) so the switcher survives a
+// daemon restart. This file is plain local I/O and spends zero tokens.
+export const DEFAULT_KNOWN_FILE = join(homedir(), '.dsh', 'pipeline', 'workspaces.json')
+
+function readKnown(file) {
+  const out = new Map()
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    const list = Array.isArray(raw && raw.workspaces) ? raw.workspaces : []
+    for (const item of list) {
+      if (!item || typeof item.key !== 'string') continue
+      const key = normalizeRoot(item.key)
+      if (!key) continue
+      out.set(key, { key, lastActive: Number(item.lastActive) || 0 })
+    }
+  } catch {
+    // first run or a corrupt file — start empty, never fail the plugin
+  }
+  return out
+}
+
+function writeKnown(file, known) {
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    const list = [...known.values()]
+      .sort((a, b) => b.lastActive - a.lastActive)
+      .slice(0, MAX_KNOWN)
+      .map(({ key, lastActive }) => ({ key, lastActive }))
+    writeFileSync(file, JSON.stringify({ version: 1, workspaces: list }, null, 2))
+  } catch {
+    // best-effort: a read-only profile must not break workspace routing
+  }
+}
+
+function nameOf(key) {
+  const base = basename(key)
+  return base || key
+}
 
 // Normalize a path into a stable registry key: absolute, symlink-resolved,
 // lowercased on Windows, no trailing separator.
@@ -59,10 +101,23 @@ function agentIdOf(source) {
   return id == null ? null : String(id)
 }
 
-export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
+export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile = DEFAULT_KNOWN_FILE }) {
   const entries = new Map()
   const childRoot = new Map()
+  const known = readKnown(knownFile)
   let lastActiveKey = null
+  let lastPersist = 0
+
+  // Remember this project for the board switcher (path only, never content).
+  function record(key) {
+    const prev = known.get(key)
+    known.set(key, { key, lastActive: Date.now() })
+    const now = Date.now()
+    if (!prev || now - lastPersist > 1000) {
+      lastPersist = now
+      writeKnown(knownFile, known)
+    }
+  }
 
   function keyFor(source) {
     const sess = sessionOf(ctx, source)
@@ -91,6 +146,7 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
     const tools = new Map((Array.isArray(list) ? list : []).map((tool) => [tool.name, tool]))
     entry = { key, root: r.store.workspaceRoot || key, r, tools }
     entries.set(key, entry)
+    record(key)
     if (typeof log === 'function') log(`[pipeline] workspace store ready: ${entry.root}`)
     return entry
   }
@@ -100,6 +156,7 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
     if (!key) return null
     const entry = ensure(key)
     if (typeof entry.r.bindSession === 'function') entry.r.bindSession(ctx, source)
+    if (lastActiveKey !== key) record(key)
     lastActiveKey = key
     return entry
   }
@@ -108,6 +165,23 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
   function peek(source) {
     const key = keyFor(source)
     return key ? entries.get(key) ?? null : null
+  }
+
+  // Known workspaces, newest first, for the board switcher. Only paths that
+  // still exist are offered; a deleted project silently drops out.
+  function listKnown() {
+    const keys = new Set([...entries.keys(), ...known.keys()])
+    const out = []
+    for (const key of keys) {
+      try {
+        if (!existsSync(key)) continue
+      } catch {
+        continue
+      }
+      out.push({ key, root: key, name: nameOf(key), lastActive: known.get(key)?.lastActive ?? 0 })
+    }
+    out.sort((a, b) => b.lastActive - a.lastActive)
+    return out.slice(0, MAX_KNOWN)
   }
 
   function bindChild(childId, key) {
@@ -139,8 +213,10 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
     return 'unknown'
   }
 
-  // Route selection: explicit ?workspace=<path|key> must already exist; the
-  // default is the workspace that called a pipeline tool most recently.
+  // Route selection: explicit ?workspace=<path|key> may name a workspace this
+  // daemon has not loaded yet (the switcher does exactly that) — load it from
+  // disk. The default is the workspace that called a pipeline tool most
+  // recently, then the newest known project.
   function entryForRoute(rawQuery) {
     let wanted = null
     try {
@@ -149,9 +225,15 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
     } catch { wanted = null }
     if (wanted) {
       const key = normalizeRoot(wanted) || String(wanted).trim().toLowerCase()
-      const entry = entries.get(key)
+      let entry = key ? entries.get(key) : null
+      if (!entry && key && known.has(key)) {
+        try {
+          if (existsSync(key)) entry = ensure(key)
+        } catch { /* fall through to error */ }
+      }
       if (entry) {
-        lastActiveKey = key
+        lastActiveKey = entry.key
+        record(entry.key)
         return { entry }
       }
       return { error: `no pipeline state for workspace: ${wanted}` }
@@ -159,10 +241,18 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
     if (lastActiveKey && entries.has(lastActiveKey)) return { entry: entries.get(lastActiveKey) }
     const all = [...entries.values()]
     if (all.length === 1) return { entry: all[0] }
-    // v106: a daemon that just restarted has no store for any workspace yet. That
-    // is an empty state, not an error — the GUI card must stay visible. Callers
-    // render an idle snapshot for it.
-    if (all.length === 0) return { idle: true }
+    if (all.length === 0) {
+      const recent = listKnown()[0]
+      if (recent) {
+        const entry = ensure(recent.key)
+        lastActiveKey = recent.key
+        return { entry }
+      }
+      // v106: a daemon that just restarted has no store for any workspace yet. That
+      // is an empty state, not an error — the GUI card must stay visible. Callers
+      // render an idle snapshot for it.
+      return { idle: true }
+    }
     return { error: 'no active workspace yet — call any pipeline_* tool first' }
   }
 
@@ -173,6 +263,7 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log }) {
     bindChild,
     tierOf,
     entryForRoute,
+    listKnown,
     lastActive: () => lastActiveKey,
     size: () => entries.size,
     keys: () => [...entries.keys()],

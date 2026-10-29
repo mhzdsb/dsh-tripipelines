@@ -126,6 +126,16 @@ try {
     cfgSrc.replace(/export const CONFIG_FILE = .*$/m, `export const CONFIG_FILE = ${JSON.stringify(join(tmp, 'global-config.json'))}`),
     'utf8',
   )
+  // v108 — the registry persists known workspaces for the switcher. Same trick:
+  // point the test copy at a throwaway file instead of ~/.dsh/pipeline.
+  const knownFile = join(tmp, 'known-workspaces.json')
+  const wsPath = join(libDir, 'workspaces.js')
+  const wsSrc = readFileSync(wsPath, 'utf8')
+  writeFileSync(
+    wsPath,
+    wsSrc.replace(/export const DEFAULT_KNOWN_FILE = .*$/m, `export const DEFAULT_KNOWN_FILE = ${JSON.stringify(knownFile)}`),
+    'utf8',
+  )
 
   const { apply } = await import(pathToFileURL(join(libDir, 'plugin.js')).href)
   const { normalizeRoot } = await import(pathToFileURL(join(libDir, 'workspaces.js')).href)
@@ -201,6 +211,10 @@ try {
   check('route returns 200 for B', resB.statusCode === 200, `status ${resB.statusCode}`)
   check('route reports the B workspace key', snapB && snapB.debug && snapB.debug.workspace === normalizeRoot(rootB), JSON.stringify(snapB?.debug))
   check('route reports two stores', snapB && snapB.debug && snapB.debug.stores === 2, JSON.stringify(snapB?.debug))
+  // v108 — the card's workspace switcher is fed by this list.
+  check('board lists both known workspaces', Array.isArray(snapB?.workspaces) && snapB.workspaces.length === 2, JSON.stringify(snapB?.workspaces))
+  check('switcher list carries project names', snapB?.workspaces?.some((w) => w.name === 'proj-a') && snapB?.workspaces?.some((w) => w.name === 'proj-b'), JSON.stringify(snapB?.workspaces))
+  check('switcher list marks the active workspace', snapB?.workspaces?.find((w) => w.active)?.key === normalizeRoot(rootB), JSON.stringify(snapB?.workspaces))
 
   const resX = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
   routes[0].handler({ url: `/pipeline/board?workspace=${encodeURIComponent(join(tmp, 'does-not-exist'))}` }, resX)
@@ -225,18 +239,37 @@ try {
   section('cold start restores per workspace')
   const h2 = makeCtx({ sessions, roots: [{ id: 'a1' }, { id: 'b1' }] })
   apply(h2.ctx, { mode: 'auto' })
-  // v106: before any tool call this registry has no store at all; the board must
-  // answer an idle 200 (the GUI card would otherwise vanish after every restart).
-  const resIdle = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
-  routes[routes.length - 1].handler({ url: '/pipeline/board' }, resIdle)
-  const idleSnap = resIdle.statusCode === 200 ? JSON.parse(resIdle.body) : null
-  check('cold board without state answers 200 idle', resIdle.statusCode === 200 && idleSnap?.ok === true && idleSnap?.run?.status === 'idle', `status ${resIdle.statusCode}`)
-  check('idle snapshot is marked idle in debug', idleSnap?.debug?.idle === true && idleSnap?.debug?.stores === 0, JSON.stringify(idleSnap?.debug))
+  // v108: the registry persists the projects it served, so a cold board restores
+  // the newest one (which is what the switcher shows) instead of idle.
+  const resCold = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
+  routes[routes.length - 1].handler({ url: '/pipeline/board' }, resCold)
+  const coldSnap = resCold.statusCode === 200 ? JSON.parse(resCold.body) : null
+  check('cold board answers 200', resCold.statusCode === 200, `status ${resCold.statusCode}`)
+  check('cold board restores the newest known workspace', coldSnap?.debug?.workspace === normalizeRoot(rootB), JSON.stringify(coldSnap?.debug))
+  check('cold board lists the known workspaces', Array.isArray(coldSnap?.workspaces) && coldSnap.workspaces.length === 2, JSON.stringify(coldSnap?.workspaces))
+
+  // The switcher may ask for a project this daemon has not loaded yet.
+  const resLoadA = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
+  routes[routes.length - 1].handler({ url: `/pipeline/board?workspace=${encodeURIComponent(rootA)}` }, resLoadA)
+  const loadA = resLoadA.statusCode === 200 ? JSON.parse(resLoadA.body) : null
+  check('cold board can load A from disk by key', resLoadA.statusCode === 200 && loadA?.debug?.workspace === normalizeRoot(rootA), `status ${resLoadA.statusCode}`)
+  check('loaded A restores its run', loadA?.run?.id === lock.run_id, JSON.stringify({ run: loadA?.run?.id }))
+
   const coldA = await statusOf(h2, 'a1')
   check('cold start restores A lock', coldA.run_id === lock.run_id && coldA.locked === true, JSON.stringify({ run: coldA.run_id, locked: coldA.locked }))
   check('cold start keeps B empty', !existsSync(bLockFile))
   const coldB = await statusOf(h2, 'b1')
   check('B still does not inherit A run', coldB.run_id !== lock.run_id)
+
+  section('a daemon with no known workspace shows idle, not an error')
+  rmSync(knownFile, { force: true })
+  const h3 = makeCtx({ sessions: new Map(), roots: [], withAgents: false })
+  apply(h3.ctx, { mode: 'auto' })
+  const resIdle = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
+  routes[routes.length - 1].handler({ url: '/pipeline/board' }, resIdle)
+  const idleSnap = resIdle.statusCode === 200 ? JSON.parse(resIdle.body) : null
+  check('cold board without state answers 200 idle', resIdle.statusCode === 200 && idleSnap?.ok === true && idleSnap?.run?.status === 'idle', `status ${resIdle.statusCode}`)
+  check('idle snapshot is marked idle in debug', idleSnap?.debug?.idle === true && idleSnap?.debug?.stores === 0, JSON.stringify(idleSnap?.debug))
 } catch (err) {
   failed += 1
   console.log(`  ✗ fatal: ${err && err.stack ? err.stack : err}`)

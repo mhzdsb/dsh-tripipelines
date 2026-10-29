@@ -4,7 +4,7 @@ import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v107'
+const BUILD_TAG = 'v108'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -232,6 +232,8 @@ export function installBoardRoute(ctx, source, cfg) {
               const picked = registry.entryForRoute(qs)
               if (picked && picked.idle) {
                 const snap = idleBoardSnapshot(cfg, registry.size())
+                snap.workspaces = (typeof registry.listKnown === 'function' ? registry.listKnown() : [])
+                  .map((w) => ({ key: w.key, name: w.name, active: false }))
                 res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
                 res.end(JSON.stringify(snap))
                 return
@@ -269,6 +271,8 @@ export function installBoardRoute(ctx, source, cfg) {
             // v103 — build first: a throwing snapshot must not leave a 200 header
             // already on the wire (ERR_HTTP_HEADERS_SENT).
             const snap = buildBoardSnapshot(r, cfg, (id) => measureAgentTokens(ctx, id))
+            snap.workspaces = (registry && typeof registry.listKnown === 'function' ? registry.listKnown() : [])
+              .map((w) => ({ key: w.key, name: w.name, active: w.key === workspaceKey }))
             snap.debug = {
               build: BUILD_TAG,
               workspace: workspaceKey,
