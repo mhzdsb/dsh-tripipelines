@@ -204,10 +204,21 @@ export function makeStatusTool(ctx, cfg, r) {
   return {
     name: 'pipeline_status',
     description: 'Read the board, trace, and token accounting.',
-    parameters: { type: 'object', additionalProperties: false, properties: {} },
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        verbose: { type: 'boolean', description: 'Include full task/subtask/agent text (default: compact projection).' },
+      },
+    },
     output: jsonOutput(),
     async execute(args, exec) {
       const board = storeToBoard(r.store)
+      const v = args?.verbose === true
+      const cap = (s, n) => {
+        const t = String(s ?? '')
+        return t.length > n ? `${t.slice(0, n - 1)}…` : t
+      }
       const byState = (arr) => {
         const m = {}
         for (const s of TASK_STATES) m[s] = 0
@@ -220,29 +231,63 @@ export function makeStatusTool(ctx, cfg, r) {
       // v104 — tell the coordinator WHY it should stop looking: live L2s push
       // their reports, so polling adds nothing and burns tokens.
       const waitingFor = board.agents.filter((a) => a.state === 'in_progress').map((a) => a.label || String(a.id ?? ''))
+      // v111 (O1) — status is a read, not a data export: long prose and agent
+      // prompts used to be ~70% of this payload, and agent records carried the L3
+      // `code`. Project to routing fields; verbose:true restores full text.
       return {
         run_id: board.run_id,
         locked: board.locked,
-        requirement: board.requirement,
+        requirement: cap(board.requirement, v ? 100000 : 400),
         taskStates: byState(board.tasks),
         subtaskStates: byState(board.subtasks),
         counters: r.store.counters,
         totalTokens,
         tasksDone,
         subtasksDone,
-        tasks: board.tasks,
-        subtasks: board.subtasks,
-        agents: board.agents,
+        tasks: board.tasks.map((t) => ({
+          id: t.id,
+          desc: cap(t.desc, v ? 100000 : 60),
+          assignee: t.assignee,
+          state: t.state,
+          depends_on: t.depends_on,
+          subtaskCount: t.subtaskCount,
+          reason: t.reason ? cap(t.reason, 120) : null,
+        })),
+        subtasks: board.subtasks.map((s) => ({
+          id: s.id,
+          parent: s.parent,
+          desc: cap(s.desc, v ? 100000 : 50),
+          state: s.state,
+          status: s.status,
+          codeLines: s.codeLines,
+          failCount: s.failCount,
+          reason: s.reason ? cap(s.reason, 120) : null,
+          ...(v ? { acceptance: s.acceptance } : {}),
+        })),
+        agents: board.agents.map((a) => ({
+          id: a.id,
+          kind: a.kind ?? null,
+          label: a.label ?? null,
+          state: a.state ?? null,
+          model: a.model ?? null,
+          scopeDir: a.scopeDir ?? null,
+          estimatedTokens: a.estimatedTokens ?? null,
+          desc: cap(a.desc, v ? 100000 : 80),
+        })),
         ...(waitingFor.length > 0
           ? { waitingFor, hint: `L2 正在处理（${waitingFor.join('、')}）；不要轮询——结束回合等待 push 汇报，宿主动会通知你。` }
           : {}),
         level1Context: measureLevel1Context(ctx, exec, cfg),
-        // v101b: 20 full messages can outweigh every useful board field, so echo the
-        // last 10 with each text capped — enough to know what just happened.
-        recentMessages: r.store.messages.slice(-10).map((m) => {
-          const t = m && m.text != null ? String(m.text) : ''
-          return t.length > 160 ? { ...m, text: `${t.slice(0, 157)}…` } : m
-        }),
+        // v111 (B1) — the old cap keyed on a `text` field the board never reads.
+        // Project each event to who/what happened + one capped note: the raw
+        // record (4-5 long string fields) cost ~500 chars per message.
+        recentMessages: r.store.messages.slice(-8).map((m) => ({
+          sender: m?.sender ?? null,
+          state: m?.state ?? null,
+          type: m?.message_type ?? null,
+          task_id: m?.task_id ?? null,
+          note: cap(m?.task_conclusion ?? m?.task_desc ?? m?.acceptance_criteria ?? '', 140),
+        })),
       }
     },
   }
@@ -458,6 +503,7 @@ export function makeCheckpointTool(ctx, cfg, r) {
         decisions: { type: 'string', description: 'Optional: key decisions that affect later work.' },
         pitfalls: { type: 'string', description: 'Optional: pitfalls / notes for the next L1.' },
         path: { type: 'string', description: 'Optional output path (default <devDir>/project_checkpoint.md).' },
+        verbose: { type: 'boolean', description: 'Return the full document text (default: only path/size/line count).' },
       },
     },
     output: jsonOutput(),
@@ -523,7 +569,16 @@ export function makeCheckpointTool(ctx, cfg, r) {
         '4. 继续按里程碑推进；里程碑「我很满意」才验收。',
         '约束：严格走插件三级架构（L1→L2→L3），不要用 Agent Teams。',
       ].join('\n')
-      return { path: file, content: text, coldStartPrompt }
+      // v111 (O2) — the document lives on disk; echoing it back cost ~5K tokens
+      // per call. verbose:true restores the old full-text behavior.
+      const out = {
+        path: file,
+        bytes: Buffer.byteLength(text, 'utf8'),
+        lines: text.split('\n').length,
+        coldStartPrompt,
+      }
+      if (args.verbose === true) out.content = text
+      return out
     },
   }
 }

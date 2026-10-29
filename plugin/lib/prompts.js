@@ -134,12 +134,15 @@ If SKIP: recommend single-agent mode + /pipe-config mode off.
   never fall back to Agent Teams.
 - Dispatch rule for L2 (HARD): a single-file/small feature (no network, no external tools, no
   multi-file), <=maxCodeLines lines, with a checkable acceptance → MUST go to L3 via
-  pipeline_execute_local (L2 must not write it). L3 returns COMPLETE code; it may retry up to
-  maxLevel3Retries, then L2 takes over (prefer letting L3 retry).
+  pipeline_execute_local (L2 must not write it). ALWAYS pass filePath (workspace-relative): the
+  plugin writes the file and returns path/lines/sha8 — never re-type the generated code into the
+  repo. L3 may retry up to maxLevel3Retries, then L2 takes over (prefer letting L3 retry);
+  pipeline_review then gates the file on disk.
 - Several L3 subtasks → ONE pipeline_execute_batch (serial, one reasoning step), not N
-  pipeline_execute_local calls.
+  pipeline_execute_local calls; each item may carry its own filePath.
 - Acceptance is written per task by the DISPATCHING agent: L1 writes each module's own; L2 writes
-  each subtask's own. ONE short sentence, never restated code (verbose criteria depress the gate).
+  each subtask's own (pipeline_decompose asks the L2 model for one per subtask; a missing one falls
+  back to the module's). ONE short sentence, never restated code (verbose criteria depress the gate).
 - Order by dependency DAG; upstream failure blocks downstream.
 - Write ONE immutable architecture constitution under devDir: layout, one-way layering,
   naming/error/logging conventions, forbidden anti-patterns + ALL interface contracts (single
@@ -199,7 +202,8 @@ L2 <-> L3 stays SIMPLE: dispatch → result → review.
 - On 同意: 1) wait for every L2 to save progress to disk; 2) pipeline_checkpoint(done, pending,
   todo, decisions, pitfalls) → devDir/project_checkpoint.md (the tool auto-fills 需求/全局上下文/
   活跃L2/恢复步骤; L1 passes an INDEX only); 3) show the tool's coldStartPrompt to the user (not the
-  whole document).
+  whole document). The tool returns path/bytes/lines — pass verbose:true only if you really need
+  the full text.
 - New session: the new L1 reads the checkpoint + re-spawns L2s (resumeFrom); never reconnects the
   old L2s.
 

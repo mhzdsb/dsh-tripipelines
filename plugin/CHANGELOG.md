@@ -2,6 +2,19 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（`dsh-pipeline-vN`），版本号即迭代序号。
 
+## v111 — 1.19.1（审计 P0：省 token + 堵路径逃逸）
+
+### 修复
+- **B3 路径逃逸（P0）**：`pipeline_register_output` / `pipeline_review` 的 `filePath` 经 `wsPath()` 约束——绝对路径、盘符、`..` 越界一律抛错；历史记录里的绝对路径（`fileAbs`）仍可读，兼容旧 run。此前 `register_output` 可读工作区外任意文件并写入板/轨迹，`review` 还会把内容交给断言执行器。
+- **B4 子任务验收（P0）**：`pipeline_decompose` 的 LLM 现在为每个子任务返回自己的 `acceptance`（`[{"desc","acceptance"}]`），不再让全部子任务继承模块级验收；旧格式（字符串数组）与确定性兜底仍回退到模块验收，并在 `fallbackReason` 里说明原因。
+- **B7/O6 代码双重计费（P0）**：`pipeline_execute_local` / `pipeline_execute_batch` / `pipeline_spawn_local_executor` 接受 `filePath`（工作区相对），插件把生成代码写盘并只返回 `path/lines/sha8`，不再把整段代码回显给 L2；`pipeline_review` 改为读盘上的真实文件做门禁，交付物缺失即判失败（`file-on-disk` 检查项）。未传 `filePath` 时保持旧行为（回显 `code`）。
+- **O1/B1 status 投影（P0）**：`pipeline_status` 默认只返回路由字段——任务/子任务描述截断、agent 只留 id/kind/label/state/model/scopeDir/estimatedTokens/desc(80)、需求截 400 字、recentMessages 投影为 `{sender,state,type,task_id,note≤140}`；`verbose:true` 恢复全文。顺带修掉 160 字符截断按 `m.text` 取值的死代码（板上的消息根本没有该字段）。真实归档 run 实测：20,041 → 4,299 字符（≈5,011 → 1,075 tok）。
+- **O2 checkpoint 不再回显全文（P0）**：`pipeline_checkpoint` 返回 `{path,bytes,lines,coldStartPrompt}`，文档正文只在 `verbose:true` 时返回；真实 run 实测 3,278 字节文档 → 771 字符负载（≈193 tok）。
+
+### 测试
+- 新增 `dev/smoke/v111_audit_fixes_smoke.mjs`（28 断言）：B4 每子任务验收 + 字符串兜底 + fallbackReason；B3 绝对路径/`..` 被拒（register_output 与 review）；execute 写盘 + `path/lines/sha8` + 盘上字节一致；缺文件门禁失败；status 投影 <3,000 字符、agent 无 code、verbose 全文；checkpoint 元数据 + verbose 正文。测试链由 10 套 → 11 套。
+- v105 的 takeover 用例改用工作区相对路径（`out.js`），与 B3 新约束一致。
+
 ## v110 — 1.19.0（看板跟随当前 DSH 工作区）
 
 ### 修复

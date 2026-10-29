@@ -138,7 +138,8 @@ try {
   const file = join(tmp, 'proj-a', 'out.js')
   writeFileSync(file, 'function add(a, b) { return a + b }\n')
   const register = makeRegisterOutputTool(ctx, cfg, r)
-  await register.execute({ subtaskId: 's1', filePath: file }, exec)
+  // v111 (B3): tool-supplied paths must be workspace-relative.
+  await register.execute({ subtaskId: 's1', filePath: 'out.js' }, exec)
   check('register_output records the file', r.store.run.filesTouched.some((f) => f.endsWith('out.js')))
 } finally {
   rmSync(tmp, { recursive: true, force: true })

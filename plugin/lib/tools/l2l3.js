@@ -1,8 +1,9 @@
 // dsh-pipeline — Level-2/3 tool factories: LLM decomposition, the L3 executor core
 // (executeOneL3Task + single/batch dispatch), review, takeover registration and the
 // one-shot local-executor spawn.
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { resolve, dirname, isAbsolute, sep } from 'node:path'
+import { createHash } from 'node:crypto'
 import { text, safeParseJson, splitIntoChunks, estimateTokens, compressText, normalizeStatus, contentText, numCfg, LEVEL2_NAMES, jsonOutput } from '../util.js'
 import { buildL3ExecutorPrompt } from '../prompts.js'
 import { gateSubtask, gateTask } from '../gates.js'
@@ -10,8 +11,46 @@ import { addRunUsage } from '../store.js'
 
 // v103 — resolve tool-supplied paths against the calling workspace, not the
 // daemon process cwd (which is the profile directory).
+// v111 (B3) — confine to the workspace: absolute paths and `..` escapes are
+// refused, so a prompt-injected L2 cannot read/write files outside the project.
 function wsPath(r, p) {
-  return resolve((r && r.store && r.store.workspaceRoot) || process.cwd(), p)
+  const root = resolve((r && r.store && r.store.workspaceRoot) || process.cwd())
+  const raw = String(p ?? '').trim()
+  if (!raw) throw new Error('path must be a non-empty string')
+  if (isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) {
+    throw new Error(`absolute path not allowed: ${raw} (pass a workspace-relative path)`)
+  }
+  const abs = resolve(root, raw)
+  const win = process.platform === 'win32'
+  const normRoot = win ? root.toLowerCase() : root
+  const normAbs = win ? abs.toLowerCase() : abs
+  if (normAbs !== normRoot && !normAbs.startsWith(normRoot + sep)) {
+    throw new Error(`path escapes the workspace: ${raw}`)
+  }
+  return abs
+}
+
+const sha8 = (s) => createHash('sha1').update(String(s ?? '')).digest('hex').slice(0, 8)
+
+// Paths recorded by the plugin were confined when written; legacy board records
+// may still hold an absolute path, so only NEW tool arguments go through wsPath.
+function fileAbs(r, p) {
+  const raw = String(p ?? '').trim()
+  if (!raw) return null
+  if (isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) return resolve(raw)
+  return wsPath(r, raw)
+}
+
+// v111 (B7/O6) — write L3 output to the real workspace file at execute time so
+// the reviewer gates the file on disk and the code is shipped exactly once.
+// The absolute path is kept OUTSIDE the board payload; results carry the
+// workspace-relative path only.
+function writeWorkspaceFile(r, cfg, relPath, code) {
+  const abs = wsPath(r, relPath)
+  mkdirSync(dirname(abs), { recursive: true })
+  writeFileSync(abs, code, 'utf8')
+  addRunUsage(r, cfg, 0, [abs])
+  return abs
 }
 
 // Level-2 decomposition via the configured flash model (deepseek-v4.1-flash).
@@ -23,7 +62,8 @@ async function decomposeViaLlm(ctx, cfg, task, signal) {
   const prompt = [
     'You are a Level-2 module lead. Split the following task into tiny subtasks for a Level-3 local executor.',
     `Each subtask is a single concrete step of at most ${cfg.maxCodeLines} lines of code or ${cfg.level3InputBudget} tokens of input.`,
-    'Return ONLY a JSON array of strings (the subtask descriptions). No prose, no markdown fences.',
+    'Return ONLY a JSON array of objects: [{"desc":"...","acceptance":"..."}]. No prose, no markdown fences.',
+    'Every subtask must carry its OWN acceptance: one short mechanically checkable sentence or an assertion, not the module acceptance.',
     `Task: ${task.desc}`,
     `Acceptance criteria: ${task.acceptance}`,
   ].join('\n\n')
@@ -42,7 +82,14 @@ async function decomposeViaLlm(ctx, cfg, task, signal) {
   }
   const parsed = safeParseJson(text)
   if (!Array.isArray(parsed)) throw new Error('Level-2 model returned a non-array')
-  const subs = parsed.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
+  // v111 (B4) — accept both shapes: an object with its own acceptance, or a
+  // bare string (older models). A missing per-subtask acceptance falls back to
+  // the module acceptance in the caller, never silently reused here.
+  const subs = parsed
+    .map((s) => (typeof s === 'string'
+      ? { desc: s.trim(), acceptance: null }
+      : { desc: String(s?.desc ?? '').trim(), acceptance: String(s?.acceptance ?? '').trim() || null }))
+    .filter((s) => s.desc)
   if (subs.length === 0) throw new Error('Level-2 model returned no subtasks')
   // v105 — account for the L2 decomposition call (it used to be invisible in the run ledger).
   return { subs, tokens: estimateTokens(prompt) + estimateTokens(text) }
@@ -85,6 +132,7 @@ export function makeDecomposeTool(ctx, cfg, r) {
       // deterministic sentence splitting if the model is unavailable or fails.
       let chunks
       let via
+      let fallbackReason
       try {
         const result = await decomposeViaLlm(ctx, cfg, task, exec.signal)
         chunks = result.subs
@@ -93,19 +141,25 @@ export function makeDecomposeTool(ctx, cfg, r) {
           addRunUsage(r, cfg, result.tokens, [])
           r.store.counters.l2Decompose = (r.store.counters.l2Decompose ?? 0) + 1
         }
-      } catch {
+      } catch (err) {
         chunks = splitIntoChunks(task.desc, cfg.level3InputBudget)
         via = 'deterministic'
+        // v111 — surface WHY the L2 model was bypassed instead of hiding it.
+        fallbackReason = String(err?.message ?? err).slice(0, 160)
       }
       const created = []
       let n = task.subtaskIds.length
       for (const chunk of chunks) {
+        const item = typeof chunk === 'string' ? { desc: chunk, acceptance: null } : chunk
         const sid = `${task.id}-s${++n}`
+        // v111 (B4) — each subtask carries its OWN acceptance; the module
+        // acceptance is only the fallback for a deterministic split.
+        const acceptance = item.acceptance ?? task.acceptance
         r.store.subtasks.set(sid, {
           id: sid,
           parent: task.id,
-          desc: chunk,
-          acceptance: task.acceptance,
+          desc: item.desc,
+          acceptance,
           state: 'pending',
           status: null,
           code: null,
@@ -114,14 +168,18 @@ export function makeDecomposeTool(ctx, cfg, r) {
         })
         task.subtaskIds.push(sid)
         created.push(sid)
-        r.record(LEVEL2_NAMES[0], 'pending', 'task_assignment', 'level3_local', sid, chunk, null, task.acceptance)
+        r.record(LEVEL2_NAMES[0], 'pending', 'task_assignment', 'level3_local', sid, item.desc, null, acceptance)
       }
       return {
         ok: true,
         taskId: task.id,
         assignee: task.assignee,
         via,
-        subtasks: created.map((id) => ({ id, desc: r.store.subtasks.get(id).desc })),
+        ...(fallbackReason ? { fallbackReason } : {}),
+        subtasks: created.map((id) => {
+          const s = r.store.subtasks.get(id)
+          return { id, desc: s.desc, acceptance: s.acceptance }
+        }),
       }
     },
   }
@@ -135,7 +193,8 @@ function level3ChatEndpoint(cfg) {
 export function makeExecuteLocalTool(ctx, cfg, r) {
   return {
     name: 'pipeline_execute_local',
-    description: 'Run ONE tiny subtask on the local L3 engine (text in, JSON out).',
+    description:
+      'Run ONE tiny subtask on the local L3 engine (text in, JSON out). With filePath the plugin writes the file and returns path/lines/sha8 instead of the code.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -145,6 +204,10 @@ export function makeExecuteLocalTool(ctx, cfg, r) {
           type: 'object',
           additionalProperties: true,
           description: 'Inline subtask {id, desc, acceptance} for direct execution without a plan.',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Optional workspace-relative file to write the L3 code to (recommended: avoids echoing the code back).',
         },
       },
     },
@@ -163,6 +226,7 @@ export function makeExecuteLocalTool(ctx, cfg, r) {
       } else {
         throw new Error('provide either subtaskId or an inline subtask object')
       }
+      if (args.filePath) subtask.filePath = String(args.filePath)
 
       // Same execution path as pipeline_execute_batch (executeOneL3Task).
       return executeOneL3Task(subtask, cfg, r, exec)
@@ -180,6 +244,8 @@ function makeSubtask(spec, fallbackId) {
     state: 'pending',
     status: null,
     code: null,
+    filePath: spec.filePath ? String(spec.filePath) : null,
+    fileSha8: null,
     reason: null,
     failCount: 0,
   }
@@ -309,18 +375,42 @@ async function executeOneL3Task(subtask, cfg, r, exec) {
     ? parsed.code
     : (parsed.code == null ? null : JSON.stringify(parsed.code))
   subtask.status = normalizeStatus(parsed.status)
+
+  // v111 (B7/O6) — with a filePath the code is shipped to disk right here and is
+  // NEVER echoed back: the reviewer gates the real file, the caller gets
+  // path/lines/sha8 (one payment instead of two).
+  if (subtask.filePath && typeof subtask.code === 'string' && subtask.code.trim()) {
+    try {
+      subtask.filePathAbs = writeWorkspaceFile(r, cfg, subtask.filePath, subtask.code)
+      subtask.fileSha8 = sha8(subtask.code)
+      subtask.codeBytes = Buffer.byteLength(subtask.code, 'utf8')
+    } catch (err) {
+      subtask.state = 'failed'
+      subtask.reason = `cannot write ${subtask.filePath}: ${err?.message ?? err}`
+      r.record('level3_local', 'failed', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.reason, subtask.acceptance)
+      return { ok: false, subtaskId: subtask.id, state: 'failed', reason: subtask.reason }
+    }
+  }
+
   subtask.state = 'review'
   r.record('level3_local', 'review', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.status, subtask.acceptance)
-  return {
+  const out = {
     ok: true,
     subtaskId: subtask.id,
     state: 'review',
-    code: subtask.code,
     status: subtask.status,
     compressed: cfg.level3Compression === 'L1',
     inputTokens: inTokens,
     usage,
   }
+  if (subtask.filePath) {
+    out.path = subtask.filePath
+    out.lines = String(subtask.code ?? '').split('\n').length
+    out.sha8 = subtask.fileSha8 ?? null
+  } else {
+    out.code = subtask.code
+  }
+  return out
 }
 
 // Batched Level-3 dispatch: N subtasks in ONE tool call, executed SERIALLY (single
@@ -346,6 +436,7 @@ export function makeExecuteBatchTool(ctx, cfg, r) {
               id: { type: 'string', description: '可选子任务 id；缺省为 batch-<index>。' },
               desc: { type: 'string', description: '子任务描述（单文件 / 小功能）。' },
               acceptance: { type: 'string', description: '该子任务自己的验收标准（一句话，可机械验证；缺省回退为 desc）。' },
+              filePath: { type: 'string', description: '可选：工作区相对路径；给出后插件写入该文件并只回 path/lines/sha8（不回代码）。' },
             },
           },
         },
@@ -430,10 +521,34 @@ export function makeReviewTool(ctx, cfg, r) {
         if (!s) throw new Error(`unknown subtask id: ${args.subtaskId}`)
         if (s.state !== 'review') throw new Error(`subtask ${s.id} is ${s.state}; must be review`)
         let code = s.code
-        if (args.filePath) {
-          try { code = readFileSync(wsPath(r, args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
+        // v111 (B7) — an explicit filePath must stay inside the workspace; a
+        // path recorded by the plugin is already confined (legacy records may be
+        // absolute). When a file is known, the FILE is the truth.
+        const explicitAbs = args.filePath ? wsPath(r, args.filePath) : null
+        const recordedAbs = !explicitAbs && s.filePath ? fileAbs(r, s.filePath) : null
+        const abs = explicitAbs ?? recordedAbs
+        let gate
+        if (abs) {
+          let readErr = null
+          if (existsSync(abs)) {
+            try { code = readFileSync(abs, 'utf8') } catch (err) { readErr = err }
+          }
+          if (readErr || !existsSync(abs)) {
+            gate = {
+              ok: false,
+              score: 0,
+              checks: [{ name: `file-on-disk (${s.filePath ?? args.filePath})`, pass: false }],
+            }
+          } else {
+            s.code = code
+            s.filePath = args.filePath ? String(args.filePath) : s.filePath
+            s.fileSha8 = sha8(code)
+            gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
+            gate.checks = [{ name: 'file-on-disk', pass: true }, ...gate.checks]
+          }
+        } else {
+          gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
         }
-        const gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
         if (gate.ok) {
           s.state = 'done'
           s.reason = null
@@ -464,6 +579,18 @@ export function makeReviewTool(ctx, cfg, r) {
         let fileCode
         if (args.filePath) {
           try { fileCode = readFileSync(wsPath(r, args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
+        }
+        // v111 (B7) — a subtask that recorded a file must still HAVE that file:
+        // module acceptance must not hide a missing deliverable.
+        if (!args.filePath) {
+          const missing = subs.filter((s) => s.filePath && !existsSync(fileAbs(r, s.filePath)))
+          if (missing.length > 0) {
+            const reason = `missing files: ${missing.map((s) => `${s.id}:${s.filePath}`).join(', ')}`
+            t.state = 'failed'
+            t.reason = reason
+            r.record(t.assignee, 'failed', 'review_result', 'level1_main', t.id, t.desc, reason, t.acceptance)
+            return { level: 2, id: t.id, ok: false, blocked: true, reason, state: 'failed' }
+          }
         }
         // Upstream (Level-3) failure blocks module acceptance — unless L1 reviews a
         // real workspace file, which supersedes the stale/broken board record.
@@ -523,6 +650,7 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
       properties: {
         prompt: { type: 'string', description: 'Tiny subtask for the executor.' },
         acceptance: { type: 'string', description: "Mechanically checkable acceptance." },
+        filePath: { type: 'string', description: 'Optional workspace-relative file; the plugin writes it and returns path/lines instead of code.' },
       },
     },
     output: jsonOutput(),
@@ -595,6 +723,36 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
           reason = err?.message ?? String(err)
         }
         const agent = r.store.agents.get(run.childId)
+        // v111 (B7/O6) — with filePath the generated code lands on disk here and
+        // is not echoed back to the caller.
+        const out = {
+          runId: run.childId,
+          provider: cfg.level3Provider || 'ninfer-local',
+          model: cfg.level3Model,
+          state,
+          reason,
+          status,
+        }
+        if (args.filePath && state === 'done' && typeof code === 'string' && code.trim()) {
+          try {
+            const abs = writeWorkspaceFile(r, cfg, args.filePath, code)
+            out.path = String(args.filePath)
+            out.lines = code.split('\n').length
+            out.sha8 = sha8(code)
+            if (agent) {
+              agent.filePath = out.path
+              agent.filePathAbs = abs
+              agent.fileSha8 = out.sha8
+            }
+          } catch (err) {
+            state = 'failed'
+            reason = `cannot write ${args.filePath}: ${err?.message ?? err}`
+            out.state = state
+            out.reason = reason
+          }
+        } else {
+          out.code = code
+        }
         if (agent) {
           agent.state = state
           agent.reason = reason
@@ -602,7 +760,7 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
           agent.status = status
         }
         r.record(LEVEL2_NAMES[0], state, 'agent_l3_result', 'level3_local', run.childId, args.prompt, reason ?? status ?? state, null)
-        return { runId: run.childId, provider: cfg.level3Provider || 'ninfer-local', model: cfg.level3Model, state, reason, code, status }
+        return out
       } finally {
         clearTimeout(timer)
         r.store.l3Concurrent--
@@ -623,7 +781,7 @@ export function makeRegisterOutputTool(ctx, cfg, r) {
       properties: {
         subtaskId: { type: 'string', description: 'The subtask id from pipeline_decompose.' },
         code: { type: 'string', description: 'Code L2 wrote to disk.' },
-        filePath: { type: 'string', description: 'Optional: read code from this file.' },
+        filePath: { type: 'string', description: 'Optional workspace-relative file; when given the file is the truth.' },
       },
     },
     output: jsonOutput(),
@@ -631,18 +789,26 @@ export function makeRegisterOutputTool(ctx, cfg, r) {
       const s = r.store.subtasks.get(args.subtaskId)
       if (!s) throw new Error(`unknown subtask id: ${args.subtaskId}`)
       let code = args.code
-      if (!code && args.filePath) {
-        try { code = readFileSync(wsPath(r, args.filePath), 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
+      let abs = null
+      // v111 (B3) — filePath is confined to the workspace; a listed file wins
+      // over an inlined copy.
+      if (args.filePath) {
+        abs = wsPath(r, args.filePath)
+        try { code = readFileSync(abs, 'utf8') } catch { throw new Error(`cannot read file: ${args.filePath}`) }
       }
       if (typeof code !== 'string' || !code.trim()) throw new Error('code (or filePath) must provide non-empty code')
       s.code = code.trim()
-      if (args.filePath) s.filePath = wsPath(r, args.filePath)
+      if (abs) {
+        s.filePath = String(args.filePath)
+        s.filePathAbs = abs
+        s.fileSha8 = sha8(s.code)
+        // v105 — a takeover that lands code on disk counts toward maxFilesPerRun.
+        addRunUsage(r, cfg, 0, [abs])
+      }
       s.status = 'done'
       s.state = 'review'
-      // v105 — a takeover that lands code on disk counts toward maxFilesPerRun.
-      if (s.filePath) addRunUsage(r, cfg, 0, [s.filePath])
       r.record(LEVEL2_NAMES[0], 'review', 'task_result', 'level1_main', s.id, s.desc, 'done (L2 takeover)', s.acceptance)
-      return { subtaskId: s.id, state: s.state, registered: true }
+      return { subtaskId: s.id, state: s.state, registered: true, ...(s.filePath ? { path: s.filePath } : {}) }
     },
   }
 }
