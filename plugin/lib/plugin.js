@@ -13,7 +13,7 @@ import { createWorkspaceRegistry } from './workspaces.js'
 import { buildProtocolText, buildProtocolOffText, SKILL_BODY } from './prompts.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { installBoardRoute } from './board-route.js'
-import { RUN_FOOTER_TOOLS, withRunFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
+import { RUN_FOOTER_TOOLS, withRunFooter, setResultFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
 import { makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
 import { makeKnowledgeTools } from './tools/knowledge.js'
 import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeReviewTool, makeSpawnLocalExecutorTool, makeRegisterOutputTool } from './tools/l2l3.js'
@@ -220,12 +220,12 @@ function apply(ctx, config) {
         const result = await target.execute(args, exec)
         if (RUN_FOOTER_TOOLS.has(t.name) && result && typeof result === 'object') {
           try {
-            // Non-enumerable: JSON output never leaks the footer, render() reads it.
-            Object.defineProperty(result, '__pipelineFooter', {
-              value: runFooter(entry.r), enumerable: false, configurable: true,
-            })
+            // v112.1 — the footer lives in a WeakMap keyed by the result value, so
+            // the value itself stays plain JSON (host validation) and concurrent
+            // calls from different workspaces cannot see each other's footer.
+            setResultFooter(result, runFooter(entry.r))
           } catch {
-            // frozen result: render simply omits the footer
+            // best-effort: render simply omits the footer
           }
         }
         return result

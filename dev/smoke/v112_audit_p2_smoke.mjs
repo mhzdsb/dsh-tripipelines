@@ -20,7 +20,7 @@ const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const load = (p) => import(pathToFileURL(join(repoRoot, 'plugin/lib', p)).href)
 const { estimateTokens, numCfg } = await load('util.js')
 const { validateConfigValue, CONFIG_KEYS, DEFAULT_CONFIG } = await load('config.js')
-const { withRunFooter, strictAdjacencyDenial } = await load('guards.js')
+const { withRunFooter, setResultFooter, strictAdjacencyDenial } = await load('guards.js')
 const { buildProtocolText, buildProtocolOffText } = await load('prompts.js')
 const { createStore } = await load('store.js')
 const { makePlanTool, makeStatusTool, makeSelftestTool } = await load('tools/l1.js')
@@ -121,12 +121,16 @@ try {
   check('takeover does not apply to execute tools', !!strictAdjacencyDenial('l2', null, { name: 'pipeline_spawn_module_lead' }, { allowLevel1Takeover: true }))
   check('L2 review stays allowed (no L1-only rule)', strictAdjacencyDenial('l2', null, reviewExec, { allowLevel1Takeover: true }) === undefined)
 
-  section('B6 — footer travels on the result value')
+  section('B6 — footer stays off the result value (WeakMap keyed by the value)')
   const value = { ok: true }
-  Object.defineProperty(value, '__pipelineFooter', { value: '\n「流水线」test-footer', enumerable: false, configurable: true })
+  setResultFooter(value, '\n「流水线」test-footer')
   const tool = withRunFooter({ name: 'pipeline_status', output: { render: () => [{ type: 'text', text: 'body' }] } })
   const rendered = tool.output.render({}, value, {})
   check('render appends the footer', Array.isArray(rendered) && rendered.at(-1).text.endsWith('test-footer'))
+  check(
+    'result value stays plain JSON (host validates it)',
+    Object.keys(value).length === 1 && !('__pipelineFooter' in value) && JSON.stringify(value) === '{"ok":true}',
+  )
   const plain = withRunFooter({ name: 'pipeline_status', output: { render: () => [{ type: 'text', text: 'body' }] } })
   check('no footer when the value has none', plain.output.render({}, { ok: true }, {})[0].text === 'body')
 

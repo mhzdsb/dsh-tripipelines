@@ -28,13 +28,22 @@ export const RUN_FOOTER_TOOLS = new Set([
 // must be appended to the array's last text block. v102 only handled a bare
 // string or a single {type:'text'} object, which no pipeline tool ever returns:
 // the "every tool result carries the run state" promise was dead code.
-// v112 (B6) — the run is now attached to the tool VALUE as a non-enumerable
-// `__pipelineFooter` string by the registration wrapper. The old module-level
-// `footerR` was one mutable variable shared by every call, so two sessions
-// running concurrently in different workspaces could render each other's footer.
+// v112.1 (B6) — the run footer is kept in a WeakMap keyed by the tool RESULT
+// object. The old module-level `footerR` was one mutable variable shared by
+// every call, so two sessions running concurrently in different workspaces could
+// render each other's footer; attaching the string to the result value directly
+// (v112.0) failed host validation ("value is not lossless JSON"), so the map keeps
+// the value itself untouched.
+const RESULT_FOOTER = new WeakMap()
+export function setResultFooter(value, text) {
+  if (value && typeof value === 'object' && typeof text === 'string' && text) {
+    RESULT_FOOTER.set(value, text)
+  }
+}
 function footerOf(value) {
   try {
-    const f = value && typeof value === 'object' ? value.__pipelineFooter : ''
+    if (!value || typeof value !== 'object') return ''
+    const f = RESULT_FOOTER.get(value)
     return typeof f === 'string' ? f : ''
   } catch {
     return ''
