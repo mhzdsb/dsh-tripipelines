@@ -2,6 +2,13 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（v114 起为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`），版本号即迭代序号。
 
+## v115 — 1.21.1（措辞：不再把层级和具体模型绑定）
+
+### 变更
+- 全仓移除「一级=pro、二级=flash」的说法。层级只描述**职责**（L1 由你在会话里选的模型担任，L2 默认取 `level2Provider`/`level2Model` 且可按模块覆盖，L3 为本地引擎），不再暗示某层必须是某个模型。
+- 影响面：README、TUTORIAL、`docs/agent-lifecycle-design.md`、`package.json` description、插件 skill 描述、`prompts.js` 的协议行与 L2 启动提示、`config.js` 的 `level2ContextBudget` 描述、`l1.js` 的 classify 理由、`l2l3.js` 注释、SKILL.md（已同步字节校验）。
+- 无功能变化；版本 1.21.0 → 1.21.1。
+
 ## v114 — 1.21.0（改名 dsh-tripipelines，准备发布 npm / market）
 
 ### 变更
