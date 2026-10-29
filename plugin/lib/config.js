@@ -107,7 +107,7 @@ export const CONFIG_KEYS = {
   maxLevel3Concurrency: { type: 'number', desc: '三级本地执行器最大并发数（默认 1；ninfer 单实例串行）' },
   maxLevel2Retries: { type: 'number', desc: '二级接管/任务最大尝试次数（超过即上报 L1 干不了）' },
   maxLevel2Agents: { type: 'number', desc: '二级模块负责人数量上限' },
-  level2ContextBudget: { type: 'number', desc: '二级模块上下文 token 预算（flash 甜点区，模块小型化参考；重建已改为无条件触发）' },
+  level2ContextBudget: { type: 'number', desc: '二级模块上下文 token 预算（二级默认模型甜点区，模块小型化参考；重建已改为无条件触发）' },
   level2SweetSpotRatio: { type: 'number', desc: '二级甜点区占模型窗口比例（默认 0.25；换 level2Model 且 autoTuneSweetSpot 开时按窗口×比例重算 level2ContextBudget）' },
   level2HandoffTtlMs: { type: 'number', desc: '旧二级交接存活毫秒（默认 300000=5 分钟，超时强制 drain）' },
   level1ContextBudget: { type: 'number', desc: '一级上下文 token 甜点区（默认 64000；接近时建议 checkpoint 交接）' },

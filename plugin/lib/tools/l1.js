@@ -676,7 +676,7 @@ export function makeClassifyTool(ctx, cfg, r) {
       let tier
       if (architecture) {
         tier = 'L1'
-        reasons.push('架构 / 接口 / 跨模块 / 验收类任务，归主 agent（pro）')
+        reasons.push('架构 / 接口 / 跨模块 / 验收类任务，归一级协调者')
       } else if (needsTools || tokens > 2000 || lines > 40) {
         tier = 'L2'
         reasons.push(needsTools ? '需要工具或多文件改动' : `规模过大（${tokens} token / ${lines} 行）`)

@@ -1,15 +1,15 @@
 # 三级 Agent 协作架构（最终定稿）
 
-本插件实现「三级模型协作开发」：一级 pro 主 agent 规划调度，二级 flash 模块负责人写码，三级本地 ninfer 执行器干具体小活。本文档是最终架构定稿。
+本插件实现「三级模型协作开发」：一级主 agent（你在会话里选的模型）规划调度，二级模块负责人（默认配置的模型，可按模块单独覆盖）写码，三级本地引擎执行器干具体小活。本文档是最终架构定稿。
 
 ---
 
 ## 0. 设计原则
 
-1. **三级固定模型**：L1=你在界面选的模型、L2=flash、L3=本地，每层模型固定（配置项，不是逐任务决策）。
+1. **分层默认、按模块覆盖**：L1=你在界面选的模型；L2 默认取配置项（level2Provider/level2Model），可对单个模块覆盖；L3=本地引擎。模型不是逐任务决策，也不绑定具体厂商/型号。
 2. **严格相邻**：L1↔L2↔L3 逐级，同级/越级禁止；用户(L0)只和 L1 对话。
 3. **领导抓大放小**：L1 只做关键决策（拆模块、判断、验收），不事无巨细。
-4. **能下沉就下沉**：纯活尽量给本地 L3，少让 L2 接手、少让 pro 介入。
+4. **能下沉就下沉**：纯活尽量给本地 L3，少让 L2 接手、少让一级介入。
 5. **按异常汇报**：正常进度不打扰上级，出问题第一时间上报。
 6. **省 token 优先**：不轮询、不重复、每层只背自己用得到的信息。
 
@@ -18,15 +18,15 @@
 ## 1. 三级拓扑 + 严格相邻
 
 ```
-用户(L0) ──只和一级对话──▶ L1(你选的模型) ◀──汇报节点迭代──▶ L2(flash) ──强制下发──▶ L3(本地)
+用户(L0) ──只和一级对话──▶ L1(你选的模型) ◀──汇报节点迭代──▶ L2(模块负责人，默认配置) ──强制下发──▶ L3(本地)
 ```
 
 | 层级 | 模型 | 机制 | 只能和谁沟通 |
 |---|---|---|---|
 | L0 用户 | — | — | 只和 L1 |
 | L1 | 你选的模型（主 agent） | 规划·验收·判断 | L0(用户) + L2 |
-| L2 | flash | continuable subagent（长活） | L1 + L3 |
-| L3 | 本地 ninfer | one-shot 执行器 | 只 L2 |
+| L2 | 默认配置（`level2Provider`/`level2Model`，可按模块覆盖） | continuable subagent（长活） | L1 + L3 |
+| L3 | 本地引擎（`level3Model`） | one-shot 执行器 | 只 L2 |
 
 **严格相邻三层强制**：
 1. agent 消息层：DSH `subagents.sendMessage` 只允许「直接父/直接子」，同级/越级硬拒。
@@ -39,7 +39,7 @@
 | 层级 | provider | model | 谁决定 |
 |---|---|---|---|
 | L1 | 界面选择器 | 用户选的任意模型 | 固定 |
-| L2 | `level2Provider` | `level2Model`（deepseek-flash） | 固定配置 |
+| L2 | `level2Provider` | `level2Model`（默认 deepseek-flash，可按模块覆盖） | 默认配置 |
 | L3 | 任意 OpenAI 兼容引擎（profile 的 llm-pi-ai 注册） | `level3Model`（如 qwen3.8-flash-next-iq3_xxs） | 固定配置 |
 
 「能力匹配」是**把任务路由到哪一层**（`pipeline_classify`），不是「给某层挑模型」。
@@ -48,7 +48,7 @@
 
 ## 3. Agent 机制
 
-- **L2 = continuable subagent（长活）**：`pipeline_spawn_module_lead` 生成（v84 起走 `subs.startActivation`），`agentOptions` 指定 flash；`pipeline_send_to_lead` 复用（不重开），上下文累积。
+- **L2 = continuable subagent（长活）**：`pipeline_spawn_module_lead` 生成（v84 起走 `subs.startActivation`），`agentOptions` 指定默认 L2 模型（可按模块覆盖）；`pipeline_send_to_lead` 复用（不重开），上下文累积。
 - **L3 = one-shot**：默认走轻量工具路径 `pipeline_execute_local`（单次 OpenAI `/v1/chat/completions` 请求，L3 吐完整代码）；`pipeline_spawn_local_executor`（agent 式真 subagent，provider 取 `level2Provider`）作可选重路径。
 
 ---
@@ -69,7 +69,7 @@
 - L1 给每个模块设 **2-3 个关键节点**；L2 只在关键节点或异常时上报（正常进度不打扰）。
 - 异常（失败/阻塞/偏离规格）**无次数上限，必须立即上报**。
 - L1 收到汇报才判断：「一切正常」回一句「继续」；异常才真正调整。
-- **每个节点 L1 重新锚定 L2**：(1) 你到了哪、(2) 下一步干什么、(3) 总目标——防小模型（flash）跑偏/失忆。
+- **每个节点 L1 重新锚定 L2**：(1) 你到了哪、(2) 下一步干什么、(3) 总目标——防 L2 跑偏/失忆。
 - 最终验收时 L1 才跨模块汇总。
 
 ---
@@ -143,7 +143,7 @@ Phase 0 引导开机 ──▶ Phase 1 需求访谈 ──▶ Phase 2 适配性�
 | `maxLevel3Concurrency` | `1` | L3 本地执行器最大并发（ninfer 单实例串行） |
 | `maxLevel2Retries` | `3` | L2 接管/任务最大尝试次数 |
 | `maxLevel2Agents` | `10` | L2 数量上限 |
-| `level2ContextBudget` | `32000` | L2 上下文 token 预算（flash 甜点区） |
+| `level2ContextBudget` | `32000` | L2 上下文 token 预算（二级默认模型甜点区） |
 | `level2HandoffTtlMs` | `300000` | 旧 L2 交接存活毫秒（=5 分钟） |
 | `level1ContextBudget` | `64000` | L1 上下文 token 甜点区 |
 | `level1SweetSpotRatio` / `level2SweetSpotRatio` | `0.5` / `0.25` | 甜点区占模型窗口比例（L1 / L2，换模型时联动） |
@@ -180,7 +180,7 @@ L1 是唯一协调者（唯一和用户对话、唯一终审），因此有单�
 
 ## 13. 里程碑用户验收 + 强制重建（无条件交接）
 
-- **规划时设里程碑 + 节点小型化**：L1 设 2–3 个里程碑；激进拆分模块，让每个 L2 待在 `level2ContextBudget`（flash 甜点区 ~32K）内，绝不派一个干不完的任务。
+- **规划时设里程碑 + 节点小型化**：L1 设 2–3 个里程碑；激进拆分模块，让每个 L2 待在 `level2ContextBudget`（二级默认模型甜点区 ~32K）内，绝不派一个干不完的任务。
 - **到点用户验收（L0）**：L1 停下，用 `ask_user_question` 弹窗问「我很满意 / 我要提出意见」。
   - 「我很满意」→ 继续。
   - 「我要提出意见」→ 弹窗收集 → 按作用域路由（全局意见进全局上下文，局部意见进对应模块）。**意见本身在切换前收集（验收门）；但意见触发的改造工作默认推迟到 checkpoint 切换之后实施**（写进待办，交给新会话按意见改），除非用户明确要求切换前完成。

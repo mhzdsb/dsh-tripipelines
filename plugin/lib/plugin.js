@@ -176,7 +176,7 @@ function apply(ctx, config) {
   //    Agent Plugin packaging structure; this makes it live in DSH).
   ctx.skills.register({
     name: 'pipeline-orchestration',
-    description: 'Three-tier model collaboration (L1 = the model you picked for this chat, L2 flash module leads, L3 local executors) for building software: onboarding, requirement interview, fit assessment, adaptive scheduling.',
+    description: 'Three-tier model collaboration (L1 = the model you picked for this chat, L2 module leads on their configured model, L3 local executors) for building software: onboarding, requirement interview, fit assessment, adaptive scheduling.',
     whenToUse: 'When the user wants to build software — a tool, library, CLI, script, or any development/coding project. Load it to plan modules, spawn module leads, and run the three-tier workflow automatically (no need for the user to say "three-tier").',
     content: SKILL_BODY,
     source: 'runtime',

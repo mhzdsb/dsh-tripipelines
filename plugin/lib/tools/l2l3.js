@@ -53,7 +53,7 @@ function writeWorkspaceFile(r, cfg, relPath, code) {
   return abs
 }
 
-// Level-2 decomposition via the configured flash model (deepseek-v4.1-flash).
+// Level-2 decomposition via the configured L2 model (level2Provider/level2Model).
 // Returns an array of subtask descriptions, or throws to trigger the
 // deterministic fallback.
 async function decomposeViaLlm(ctx, cfg, task, signal) {

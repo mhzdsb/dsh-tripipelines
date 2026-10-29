@@ -12,7 +12,7 @@
 ```
 Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）     Level 3（本地模型 / 执行器）
    规划 · 分解 · 验收   ──▶      再分解 · 写主代码 · 审核  ──▶   只跑极简子任务
- deepseek-v4-pro                deepseek-flash                   qwen3.8-27b-gsq-rco-iq3-s-mtp (ninfer)
+ 你在界面选的模型              默认 deepseek-flash（可按模块覆盖）  level3Model（如 qwen3.8-27b…）
 ```
 
 - **指令自上而下**：L1 分配模块任务 → L2 拆成 ≤200 token 的子任务 → L3 执行。
@@ -45,7 +45,7 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 |---|---|---|
 | `pipeline_lock_requirements` | L1 | 需求确认后锁定，生成 `requirement_lock.json`，开启一个 run（可带 `activation` 激活答案） |
 | `pipeline_plan` | L1 | 提交并校验结构化 TaskPlan（任务分解 + 里程碑声明 `milestones`） |
-| `pipeline_spawn_module_lead` | L1→L2 | 生成长活 flash 二级（continuable subagent） |
+| `pipeline_spawn_module_lead` | L1→L2 | 生成长活二级（continuable subagent；默认配置模型，可传 `provider`/`model` 覆盖） |
 | `pipeline_send_to_lead` | L1↔L2 | 复用长活二级发后续任务（不重开） |
 | `pipeline_drain_leads` | L1 | 里程碑重建后释放一批旧二级 |
 | `pipeline_checkpoint` | L1 | 写项目交接文档（10 节契约）+ 冷启动 prompt |
@@ -65,7 +65,7 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 
 > **严格相邻**：一级（主 agent）**无权调用** `pipeline_decompose`、`pipeline_execute_local`、
 > `pipeline_execute_batch`、`pipeline_spawn_local_executor`（由 `tools.guard` 运行时拒绝，系统提示词提前告知）。
-> 一级要触达 flash/本地模型，只能 `pipeline_spawn_module_lead` / `pipeline_send_to_lead` 委托二级。
+> 一级要触达二级/三级能力，只能 `pipeline_spawn_module_lead` / `pipeline_send_to_lead` 委托二级。
 
 ---
 

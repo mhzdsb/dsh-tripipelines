@@ -1,13 +1,13 @@
 # dsh-tripipelines · 流水线
 
-> **强模型掌舵，弱模型干活。** 把大活拆成每个模型都吃得下的份量——花钱花在刀刃上，代码写得经得起十年。
+> **分层协作，按需分配模型。** 把大活拆成每个模型都吃得下的份量——钱花在刀刃上，代码写得经得起十年。
 
-一个 **DeepSeek Harness（DSH）原生插件**：一级 pro 负责规划与验收，二级 flash 写代码，三级本地模型干碎活，三级之间严格相邻、逐任务验收、全程可暂停可回溯。
+一个 **DeepSeek Harness（DSH）原生插件**：一级（你在会话里选的模型）负责规划与验收，二级（默认配置的模型，可按模块覆盖）负责写模块代码，三级本地模型干碎活。三级严格相邻、逐任务验收、全程可暂停可回溯。
 
 纯 Node 内置依赖，零外部 npm 包，不碰你的 DSH 源码。
 
 ```
-用户 ──只和 L1 对话──▶ L1(你选的模型) ◀──汇报迭代──▶ L2(flash) ──强制下发──▶ L3(本地引擎)
+用户 ──只和 L1 对话──▶ L1(你选的模型) ◀──汇报迭代──▶ L2(模块负责人) ──强制下发──▶ L3(本地引擎)
       规划·验收·不写码     重新锚定·按异常汇报     分解·写码·审核        完整文件·多试几次·干不了反馈
       严格相邻：L1 ↔ L2 ↔ L3，同级/越级禁止
 ```
@@ -16,7 +16,7 @@
 
 ## 为什么需要它
 
-一个 **pro 模型从头写到尾**：聪明，但贵、慢，而且上下文越写越糊——到了第 30 个文件，它已经记不清第 1 个文件的接口。
+一个 **大模型从头写到尾**：聪明，但贵、慢，而且上下文越写越糊——到了第 30 个文件，它已经记不清第 1 个文件的接口。
 
 **全交给本地小模型**：便宜，但写不对，来回返工的钱比省下来的多。
 
@@ -24,9 +24,9 @@
 
 | 层 | 谁 | 干什么 | 成本 |
 |---|---|---|---|
-| L1 | 你选的模型（最贵的脑子） | 拆任务、定验收、终审、只和用户对话 | 花在刀刃上 |
-| L2 | flash（便宜很多） | 模块负责人，写完整文件、跑质量门 | 主力劳动 |
-| L3 | 本地引擎（基本免费） | 单函数/小片段，检查验收断言 | 碎活 |
+| L1 | 你在会话里选的模型 | 拆任务、定验收、终审、只和用户对话 | 花在刀刃上 |
+| L2 | 默认配置的模型（可按模块覆盖） | 模块负责人，写完整文件、跑质量门 | 主力劳动 |
+| L3 | 本地引擎（通常最便宜） | 单函数/小片段，检查验收断言 | 碎活 |
 
 外加三个设计让这条产线**不会失控**：一次性激活确认、预算护栏（token/时长/文件数触顶自动暂停）、里程碑硬验收（不许悄悄跳过）。
 
@@ -83,7 +83,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 
 | 能力 | 说明 |
 |---|---|
-| **三级模型路由** | L1=你在界面选的模型（主 agent）、L2=flash（长活 subagent）、L3=任意 OpenAI 兼容本地引擎 |
+| **三级模型路由** | L1=你在界面选的模型（主 agent，不一定是 pro）、L2=默认配置的模型（长活 subagent，可按模块覆盖，不一定是 flash）、L3=任意 OpenAI 兼容本地引擎 |
 | **严格相邻** | agent 消息层 + `tools.guard` 双重强制，同级/越级禁止 |
 | **二级长活** | L2 是长活 subagent，复用不重开，上下文累积 |
 | **逐任务验收标准** | 每级下发的任务由**下发方现场生成**各自的验收标准，质量门按它打分 |
@@ -93,12 +93,12 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 | **按异常汇报 + 禁止轮询** | L1/L2 不轮询看板，靠 push 汇报，大幅省 token |
 | **GUI 看板（v92/v94）** | Web UI 侧栏内嵌一张与「余额」卡同款的小卡：run 状态 / 里程碑 / 每层甜点区（绿黄红）/ 活跃 L2 与模型 / token 预算，模型看不到，用户随时看得见 |
 | **每 L2 独立工作目录（v92）** | `pipeline_spawn_module_lead` 传 `scopeDir` → subagent 真实 `cwd` 隔离，多个 lead 不踩文件 |
-| **每 L2 独立模型（v94）** | 同一个 lead 可传 `provider` / `model` 覆盖默认 flash——难的模块用 pro，其余照旧省钱 |
+| **每 L2 独立模型（v94）** | 同一个 lead 可传 `provider` / `model` 覆盖默认配置——难模块换更强模型，其余照旧省钱 |
 | **里程碑状态机** | 里程碑完成 → 弹窗验收 → 落盘；未验收硬 Gate；冷启动自动恢复 |
 | **预算护栏** | `maxTotalTokensPerRun` / `maxDurationPerRun` / `maxFilesPerRun`（0=不限） |
 | **一次性激活 Gate** | 新工作区只问一次，答案按工作区记忆，之后不再打扰 |
 | **健康自检** | `/pipe-selftest` 检查 subagents API、llm 服务、L3 引擎；启动时也会非阻塞 ping |
-| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起全部 9 套 smoke 回归 |
+| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起 12 套 smoke 回归 |
 | **四阶段工作流** | 引导开机 → 需求访谈 → 适配性评估 → 自适应调度 |
 
 > 完整功能清单见 [CHANGELOG.md](CHANGELOG.md)，架构细节见 [docs/agent-lifecycle-design.md](docs/agent-lifecycle-design.md)。
@@ -108,7 +108,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 ### 前置条件
 1. **DSH** 已运行。
 2. **本地推理引擎**：任意 OpenAI 兼容服务（llama.cpp / vLLM / Ollama / strata 等）。在 profile 的 `llm-pi-ai` 里声明 provider 后，用 `/pipe-config level3Endpoint` 与 `level3Model` 指向它；自检 `curl <endpoint>/models`，或直接 `/pipe-selftest`。
-3. L2 的 flash 模型在 DSH 里可用（`deepseek-official` / `deepseek-flash`）。
+3. 默认的 L2 模型在 DSH 里可用（`deepseek-official` / `deepseek-flash`，可按模块覆盖）。
 
 ### 安装步骤
 本插件是「目录」形式 bundle（`package.json` + `cordis.patch.yml` + `lib/` + `skills/`）：
@@ -186,7 +186,7 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 |---|---|---|
 | `pipeline_lock_requirements` | L1 | 锁定需求，开 run（可带 `activation`） |
 | `pipeline_plan` | L1 | 记录 TaskPlan（依赖 DAG + 环检测 + 里程碑声明） |
-| `pipeline_spawn_module_lead` | L1→L2 | 生成长活 flash 二级（可传 `scopeDir` 独立工作目录、`provider`/`model` 给该 L2 单独指定模型） |
+| `pipeline_spawn_module_lead` | L1→L2 | 生成长活模块负责人（默认配置的模型；可传 `scopeDir` 独立工作目录、`provider`/`model` 单独指定模型） |
 | `pipeline_send_to_lead` | L1↔L2 | 复用二级发后续任务 |
 | `pipeline_drain_leads` | L1 | 里程碑重建后释放旧二级 |
 | `pipeline_checkpoint` | L1 | 写 10 节交接文档 + 冷启动 prompt |
@@ -238,7 +238,7 @@ pipeline_ledger()            # 从交接文档抽决策候选
 
 1. **桌面端不能加载非内置依赖**：可视化设置页需要 `schemastery`，用 `/pipe-config` 命令代替。
 2. **`deepseek-v4.1-flash` 不存在**，正确 id 是 `deepseek-flash`。
-3. **Agent Teams teammate 不能指定模型**（继承父 agent pro），所以二级长活用 **continuable subagent**。
+3. **Agent Teams teammate 不能指定模型**（继承父 agent 的模型），所以二级长活用 **continuable subagent**。
 4. 质量门是「执行断言优先 + 语义关键词兜底」，断言 **fail-closed**：没有可用 runner、代码被静态安全门拦下、或任一断言失败，都判失败，不会回落关键词分。语义分本身封顶 0.5，默认阈值 0.7 下无法单独过门。
 5. **JS/TS 与 Python 都支持**：JS 走 `node` 子进程，Python 走 AST 静态安全门 + 子进程；宿主机执行可通过 `allowCodeExecution=false` 整体关闭（关闭后含断言的验收一律不通过）。
 
@@ -274,7 +274,7 @@ dsh-tripipelines/
 └── CHANGELOG.md                          # 版本日志
 ```
 
-`pnpm test`（在 `plugin/` 下）一键跑 10 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 48 断言（含看板跟随当前工作区、切换器与折叠栏同步）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）。
+`pnpm test`（在 `plugin/` 下）一键跑 12 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 48 断言（含看板跟随当前工作区、切换器与折叠栏同步）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）。
 
 ---
 
