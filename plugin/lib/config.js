@@ -1,4 +1,4 @@
-// dsh-pipeline — configuration: defaults, layered merge, sweet-spot tuning,
+// dsh-tripipelines — configuration: defaults, layered merge, sweet-spot tuning,
 // and the /pipe-config command body. No DSH service access.
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'

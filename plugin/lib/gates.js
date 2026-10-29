@@ -1,4 +1,4 @@
-// dsh-pipeline — deterministic quality gates: execution-first assertions (Python
+// dsh-tripipelines — deterministic quality gates: execution-first assertions (Python
 // subprocess), JSON/DoD checks and the semantic fallback score.
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'

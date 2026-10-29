@@ -1,4 +1,4 @@
-// dsh-pipeline — tool guards: L1-only tool boundary, strict adjacency, the v89
+// dsh-tripipelines — tool guards: L1-only tool boundary, strict adjacency, the v89
 // milestone hard gate, and the live run-footer wrapper.
 //
 // v103 — role attribution no longer trusts a single optional field: the tier is

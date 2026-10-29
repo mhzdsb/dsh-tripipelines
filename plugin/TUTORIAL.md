@@ -1,9 +1,9 @@
 # 三级模型协作插件 —— 使用与配置教程
 
-本插件 `dsh-pipeline` 是一套在 DeepSeek Harness (DSH) 中运行的
+本插件 `dsh-tripipelines` 是一套在 DeepSeek Harness (DSH) 中运行的
 **三级模型分层协作开发系统**。它已经安装并激活在你的桌面端里，无需重启即可使用。
 > Level-3 走任意 **OpenAI 兼容**本地引擎（llama.cpp / vLLM / Ollama / strata 等）：端点用 `level3Endpoint`、模型用 `level3Model`，`/pipe-selftest` 会探测 `/v1/models`。
-> 适配 DSH 新版 subagents API（`startActivation` / `drainChildren`）；插件名 `dsh-pipeline`、命令 `/pipe-*`、工具 `pipeline_*`，代码拆成 `lib/` 下多个模块。
+> 适配 DSH 新版 subagents API（`startActivation` / `drainChildren`）；插件名 `dsh-tripipelines`、命令 `/pipe-*`、工具 `pipeline_*`，代码拆成 `lib/` 下多个模块。
 
 ---
 
@@ -73,7 +73,7 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 
 ### 2.1 桌面端（当前运行的应用）
 
-本仓库的发布脚本会把 `plugin/` 复制为 `~/.dsh/dsh-pipeline-vNN` 快照再安装；实际装的是哪个版本，以插件管理器 `list_plugins` 的显示为准（版本号见 `package.json`）。已装好就跳到第 4 节；升级见第 7 节。
+本仓库的发布脚本会把 `plugin/` 复制为 `~/.dsh/dsh-tripipelines-vNN` 快照再安装；实际装的是哪个版本，以插件管理器 `list_plugins` 的显示为准（版本号见 `package.json`）。已装好就跳到第 4 节；升级见第 7 节。
 
 > 说明：包名带 `-vN` 后缀是为了绕过 Electron 进程的模块缓存——**每次改代码都要复制到新目录、把包名 `-vN` 加 1、再重装**（install 新版 → remove 旧版 → 对新版 enable/disable 一次）。只改目录不改包名，DSH 仍会加载旧缓存。
 
@@ -90,7 +90,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 # 2) 在 profiles/web/cordis.patch.yml 末尾加：
 #    - insert:
 #        - id: pipeline
-#          name: 'dsh-pipeline'
+#          name: 'dsh-tripipelines'
 ```
 
 > 装好后用 web 档新开会话，`listTools` 里应出现 `pipeline_*`；若没有，确认 `profiles/web/cordis.patch.yml` 里确实有 `pipeline` 行。
@@ -365,7 +365,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| 工具不出现（`listTools` 里没有 pipeline_*） | bundle 未启用；用插件管理器确认 `dsh-pipeline` 为 enabled，或重装 |
+| 工具不出现（`listTools` 里没有 pipeline_*） | bundle 未启用；用插件管理器确认 `dsh-tripipelines` 为 enabled，或重装 |
 | 提示 `order must be a finite number` | 旧缓存版本；已通过 `-vN` 改名解决。如再遇到，重装即可 |
 | `pipeline_execute_local` 报 `level3Endpoint 未配置` / `connection refused` | 先 `/pipe-config level3Endpoint http://127.0.0.1:<port>/v1` 指向你的引擎，并确认 `/v1/models` 可访问 |
 | 报模型不存在 | 把 `level3Model` 改成 ninfer 已加载的模型 id（`/v1/models` 里可见） |

@@ -1,4 +1,4 @@
-// dsh-pipeline — Level-1 tool factories: lock/plan, L2 lifecycle (spawn/send/
+// dsh-tripipelines — Level-1 tool factories: lock/plan, L2 lifecycle (spawn/send/
 // drain/checkpoint), status, classify, selftest and milestone acceptance.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'

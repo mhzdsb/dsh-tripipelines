@@ -17,18 +17,18 @@ curl http://127.0.0.1:8080/v1/models
 
 ## 第 1 步：装插件（1 分钟）
 
-二选一（`dsh-pipeline-vNN` 是发布快照目录，`NN` 为迭代号）：
+二选一（`dsh-tripipelines-vNN` 是发布快照目录，`NN` 为迭代号）：
 
-**A. 插件管理器（推荐）**：打开 DSH 插件管理器 GUI，或让主 agent 执行：
-
-```
-plugin_manager install_bundle('C:/path/to/dsh-pipeline-vNN')
-```
-
-**B. 命令行（需要 pnpm）**：
+**A. npm / market（发布后，推荐）**：在 DSH 的插件页搜索 `dsh-tripipelines` 安装，或让主 agent 执行：
 
 ```bash
-dsh plugin add C:/path/to/dsh-pipeline-vNN
+dsh plugin --profile <profile> add dsh-tripipelines
+```
+
+**B. 本地快照 / 开发（link 安装）**：
+
+```
+plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')
 ```
 
 > 装好后**新开一个会话**（或刷新页面），才能加载插件的提示词与工具。

@@ -177,7 +177,7 @@ check('default scope dir created', existsSync(resolve(join('.dsh', 'pipeline', '
 // 4. client bundle wiring (static)
 // ---------------------------------------------------------------------------
 const clientSrc = readFileSync(new URL('plugin/client.js', root), 'utf8')
-check('client loader declares package id', clientSrc.includes("id: 'dsh-pipeline'"))
+check('client loader declares package id', clientSrc.includes("id: 'dsh-tripipelines'"))
 check('client registers sidebar.footer.action', clientSrc.includes("'sidebar.footer.action'"))
 check('client keeps a single board id (no probes)', !clientSrc.includes('pipeline-probe') && (clientSrc.match(/'pipeline-board'/g) || []).length === 1)
 check('client has exactly one seat (no composer strip, no floating card)', !clientSrc.includes('conversation.composer.dock') && !clientSrc.includes('shell.overlay') && !clientSrc.includes('pipeline-panel'))

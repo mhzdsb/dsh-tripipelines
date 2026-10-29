@@ -1,0 +1,608 @@
+
+> dsh-tripipelines@1.21.0 test
+> node ../dev/smoke/verify-v82.mjs && node ../dev/smoke/v89_control_smoke.mjs && node ../dev/smoke/v90_tool_factory_probe.mjs && node ../dev/smoke/v92_board_smoke.mjs && node ../dev/smoke/v98_knowledge_smoke.mjs && node ../dev/smoke/v99_knowledge_hardening_smoke.mjs && node ../dev/smoke/skill_sync_check.mjs && node ../dev/smoke/v103_workspace_isolation_smoke.mjs && node ../dev/smoke/v104_gate_roles_smoke.mjs && node ../dev/smoke/v105_lifecycle_smoke.mjs && node ../dev/smoke/v111_audit_fixes_smoke.mjs && node ../dev/smoke/v112_audit_p2_smoke.mjs
+
+PASS  DEFAULT_CONFIG has level1Model
+PASS  CONFIG_KEYS has level1Model
+PASS  DEFAULT_CONFIG has level1SweetSpotRatio
+PASS  CONFIG_KEYS has level1SweetSpotRatio
+PASS  DEFAULT_CONFIG has level2SweetSpotRatio
+PASS  CONFIG_KEYS has level2SweetSpotRatio
+PASS  DEFAULT_CONFIG has autoTuneSweetSpot
+PASS  CONFIG_KEYS has autoTuneSweetSpot
+PASS  autoTuneSweetSpot default true
+PASS  level1SweetSpotRatio default 0.5
+PASS  level2SweetSpotRatio default 0.25
+PASS  CONFIG_KEYS.autoTuneSweetSpot.type === 'boolean'
+PASS  autoTuneSweetSpot in savePersisted snapshot keys
+PASS  coerce 'false' -> false
+PASS  coerce 'off' -> false
+PASS  coerce 'true' -> true
+PASS  coerce rejects invalid boolean
+PASS  default pinned: stateDir
+PASS  default pinned: level2Provider
+PASS  default pinned: level2Model
+PASS  default pinned: level3Model
+PASS  default pinned: level3Endpoint
+PASS  default pinned: level3Provider
+PASS  default pinned: spawnProvider
+PASS  default pinned: level3InputBudget
+PASS  default pinned: level3MaxOutputTokens
+PASS  default pinned: level3TimeoutMs
+PASS  default pinned: semanticGateThreshold
+PASS  default pinned: mode
+PASS  default pinned: maxCodeLines
+PASS  default pinned: maxLevel3Retries
+PASS  default pinned: maxLevel2Retries
+PASS  default pinned: maxLevel2Agents
+PASS  default pinned: level2ContextBudget
+PASS  default pinned: level2HandoffTtlMs
+PASS  default pinned: level1ContextBudget
+PASS  default pinned: level1ContextWarnRatio
+PASS  default pinned: level3Compression
+PASS  default pinned: devDir
+PASS  layer merge keeps pinned defaults
+PASS  layer order last-wins
+PASS  layers not mutated
+PASS  null layer ignored
+PASS  undefined never overrides
+PASS  ratio set ok
+PASS  ratio change retunes level2ContextBudget
+PASS  ratio change explains old -> new
+PASS  linkage recomputes level2ContextBudget
+PASS  linkage text explains old -> new
+PASS  profile miss keeps budget
+PASS  profile miss message
+PASS  level3 model change keeps L3 budgets
+PASS  level3 model text explains no linkage
+PASS  autoTune off persisted in cfg
+PASS  autoTune off -> budget untouched
+PASS  autoTune off message
+PASS  manual budget wins immediately
+PASS  manual budget hint mentions priority
+PASS  manual budget persisted to config.json
+PASS  persisted snapshot includes new keys
+PASS  reload does not recompute manual budget
+PASS  unrelated key text has no linkage note
+PASS  rejects maxCodeLines 0
+PASS  rejects ratio > 1
+PASS  rejects negative budget
+PASS  rejects non-http endpoint
+PASS  accepts http endpoint
+PASS  tuneSweetSpot(null) safe
+PASS  tuneSweetSpot level3 is a no-op
+PASS  default level1Model has a profile
+PASS  default level2Model has a profile
+PASS  default level3Model has a profile
+PASS  loadProjectConfig reads file
+PASS  loadProjectConfig missing dir -> {}
+[pipeline] 宿主缺少必需 API：subagents service、sessions service、llm service。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] 宿主缺少可选 API：tokenMeter service；上下文计量退回估算，读数偏小（功能可用）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+PASS  project A overrides global budget
+PASS  project A overrides global model
+PASS  project A inherits global level1ContextBudget
+[pipeline] 宿主缺少必需 API：subagents service、sessions service、llm service。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] 宿主缺少可选 API：tokenMeter service；上下文计量退回估算，读数偏小（功能可用）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+PASS  project B sees only its own override
+PASS  project B not contaminated by A model
+[pipeline] 宿主缺少必需 API：subagents service、sessions service、llm service。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] 宿主缺少可选 API：tokenMeter service；上下文计量退回估算，读数偏小（功能可用）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+PASS  no project file -> global layer wins
+[pipeline] 宿主缺少必需 API：subagents service、sessions service、llm service。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] 宿主缺少可选 API：tokenMeter service；上下文计量退回估算，读数偏小（功能可用）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+PASS  broken project file falls back to global
+[pipeline] 宿主缺少必需 API：subagents service、sessions service、llm service。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] 宿主缺少可选 API：tokenMeter service；上下文计量退回估算，读数偏小（功能可用）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+PASS  reset warns about project layer
+
+v82 verification: 82 passed, 0 failed
+PASS  DEFAULT_CONFIG has activationGate
+PASS  CONFIG_KEYS has activationGate
+PASS  DEFAULT_CONFIG has maxTotalTokensPerRun
+PASS  CONFIG_KEYS has maxTotalTokensPerRun
+PASS  DEFAULT_CONFIG has maxDurationPerRun
+PASS  CONFIG_KEYS has maxDurationPerRun
+PASS  DEFAULT_CONFIG has maxFilesPerRun
+PASS  CONFIG_KEYS has maxFilesPerRun
+PASS  DEFAULT_CONFIG has level3Engine
+PASS  CONFIG_KEYS has level3Engine
+PASS  activationGate default true
+PASS  maxTotalTokensPerRun default 500000
+PASS  maxDurationPerRun default 7200000
+PASS  maxFilesPerRun default 200
+PASS  level3Engine type enum
+PASS  run starts idle
+PASS  run milestones starts empty
+PASS  run.json written
+PASS  run.json keeps status/scope
+PASS  milestone done when all tasks done
+PASS  milestone pending when a task runs
+PASS  milestone progress counts
+PASS  accepted milestone stays accepted
+PASS  unknown task ids are ignored
+PASS  no refusal under cap
+PASS  token cap refusal
+PASS  file cap refusal
+PASS  zero caps = unlimited
+PASS  paused run always refuses
+PASS  tokens accumulated
+PASS  files accumulated
+PASS  files deduped
+PASS  auto-paused at token cap
+PASS  pause reason mentions token
+PASS  in-flight tokens still counted after pause
+PASS  paused run persisted
+PASS  footer mentions paused
+PASS  footer mentions milestone count
+PASS  cold start restores active+paused run
+PASS  cold start restores task
+PASS  cold start rebuilds subtaskIds
+PASS  cold start restores subtask
+PASS  cold start restores agents
+PASS  cold start restores run_id
+PASS  acceptance ran + passed
+PASS  acceptance detects failure
+PASS  syntax error -> ran:false
+PASS  exec scratch dirs cleaned up
+PASS  no assertion -> null
+
+v89 control verification: 49 passed, 0 failed
+PASS  makeLockTool exported
+PASS  makeLockTool -> pipeline_lock_requirements
+PASS  makeLockTool has description
+PASS  makeLockTool has parameters
+PASS  makePlanTool exported
+PASS  makePlanTool -> pipeline_plan
+PASS  makePlanTool has description
+PASS  makePlanTool has parameters
+PASS  makeStatusTool exported
+PASS  makeStatusTool -> pipeline_status
+PASS  makeStatusTool has description
+PASS  makeStatusTool has parameters
+PASS  makeSpawnModuleLeadTool exported
+PASS  makeSpawnModuleLeadTool -> pipeline_spawn_module_lead
+PASS  makeSpawnModuleLeadTool has description
+PASS  makeSpawnModuleLeadTool has parameters
+PASS  makeSendToLeadTool exported
+PASS  makeSendToLeadTool -> pipeline_send_to_lead
+PASS  makeSendToLeadTool has description
+PASS  makeSendToLeadTool has parameters
+PASS  makeDrainLeadsTool exported
+PASS  makeDrainLeadsTool -> pipeline_drain_leads
+PASS  makeDrainLeadsTool has description
+PASS  makeDrainLeadsTool has parameters
+PASS  makeCheckpointTool exported
+PASS  makeCheckpointTool -> pipeline_checkpoint
+PASS  makeCheckpointTool has description
+PASS  makeCheckpointTool has parameters
+PASS  makeClassifyTool exported
+PASS  makeClassifyTool -> pipeline_classify
+PASS  makeClassifyTool has description
+PASS  makeClassifyTool has parameters
+PASS  makeSelftestTool exported
+PASS  makeSelftestTool -> pipeline_selftest
+PASS  makeSelftestTool has description
+PASS  makeSelftestTool has parameters
+PASS  makeAcceptMilestoneTool exported
+PASS  makeAcceptMilestoneTool -> pipeline_accept_milestone
+PASS  makeAcceptMilestoneTool has description
+PASS  makeAcceptMilestoneTool has parameters
+PASS  makeDecomposeTool exported
+PASS  makeDecomposeTool -> pipeline_decompose
+PASS  makeDecomposeTool has description
+PASS  makeDecomposeTool has parameters
+PASS  makeExecuteLocalTool exported
+PASS  makeExecuteLocalTool -> pipeline_execute_local
+PASS  makeExecuteLocalTool has description
+PASS  makeExecuteLocalTool has parameters
+PASS  makeExecuteBatchTool exported
+PASS  makeExecuteBatchTool -> pipeline_execute_batch
+PASS  makeExecuteBatchTool has description
+PASS  makeExecuteBatchTool has parameters
+PASS  makeReviewTool exported
+PASS  makeReviewTool -> pipeline_review
+PASS  makeReviewTool has description
+PASS  makeReviewTool has parameters
+PASS  makeSpawnLocalExecutorTool exported
+PASS  makeSpawnLocalExecutorTool -> pipeline_spawn_local_executor
+PASS  makeSpawnLocalExecutorTool has description
+PASS  makeSpawnLocalExecutorTool has parameters
+PASS  makeRegisterOutputTool exported
+PASS  makeRegisterOutputTool -> pipeline_register_output
+PASS  makeRegisterOutputTool has description
+PASS  makeRegisterOutputTool has parameters
+[pipeline] 宿主缺少必需 API：subagents service、sessions service、llm service。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] 宿主缺少可选 API：tokenMeter service；上下文计量退回估算，读数偏小（功能可用）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+PASS  19 tools registered
+PASS  7 commands registered
+PASS  plugin applies cleanly
+
+v90 tool-factory probe: ALL PASS
+PASS  snapshot ok flag
+PASS  snapshot run id
+PASS  snapshot requirement
+PASS  milestone state computed from task (done)
+PASS  tasks present with state
+PASS  l2 agent with scopeDir
+PASS  budget maxTokens from cfg
+PASS  budget tokensUsed
+PASS  recent event type
+PASS  route registered exact /pipeline/board
+PASS  install returns disposer
+PASS  handler 200 + json body
+PASS  soft capability without webServer
+[pipeline] board route registration failed: x
+PASS  soft capability with broken webServer
+PASS  late path injects webServer dependency
+PASS  late route registered via inject
+PASS  late disposer is callable
+PASS  ready fallback registers route
+PASS  spawn echoes scopeDir
+PASS  request.cwd is absolute scope dir
+PASS  prompt carries WORK DIRECTORY block
+PASS  scope dir created on disk
+PASS  agent record keeps scopeDir
+PASS  spawn passes per-lead model to subagents
+PASS  agent record keeps per-lead model
+PASS  agent without override keeps level2 model
+PASS  snapshot exposes per-lead model
+PASS  default scopeDir sanitized under .dsh/pipeline/work
+PASS  default scope dir created
+PASS  client loader declares package id
+PASS  client registers sidebar.footer.action
+PASS  client keeps a single board id (no probes)
+PASS  client has exactly one seat (no composer strip, no floating card)
+PASS  client polls /pipeline/board
+PASS  client keeps an idle posture
+PASS  client uses theme tokens
+PASS  package.json exports ./client
+PASS  package.json ships client.js
+PASS  package.json declares dsh.client
+PASS  plugin creates per-workspace stores (v103)
+PASS  route handler has a build tag
+PASS  plan returns a module-count hint
+PASS  plan hint targets collapsed plans
+PASS  spawn returns an unspawned-module hint
+PASS  skill has a module count guide
+PASS  skill requires >=3 leads for >=3 concerns
+PASS  skill keeps the single-file fast path
+PASS  agent token read prefers surfaceTokens
+PASS  level1 read uses the tail-window estimate
+PASS  measureAgentTokens returns the surface reading
+
+v92 board smoke: ALL PASS
+PASS  scan returns counts
+PASS  index.md written
+PASS  index.md has header
+PASS  index.md lists a module
+PASS  map.json written + hashes
+PASS  binary file not indexed as code
+PASS  module pages generated
+PASS  a module page exists
+PASS  page index lists modules
+PASS  ledger extracts candidates
+PASS  ledger records the SQLite decision
+PASS  ledger catches verdict section
+PASS  recall finds SQLite with line number
+PASS  recall handles Chinese query
+PASS  recall returns no false hits
+
+v98 knowledge smoke: 15 passed, 0 failed
+PASS  go layout groups cmd/app
+PASS  go layout groups internal/store
+PASS  go layout groups pkg/util
+PASS  java layout groups src/main/java
+PASS  secret files are counted separately
+PASS  .env is not a code file
+PASS  index.md has code modules
+PASS  secret value never leaks into index.md
+PASS  checkpoint excerpt is redacted in index.md
+PASS  secret value never leaks into map.json
+PASS  hashes.json written
+PASS  hashes.json excludes secret files
+PASS  hashes.json tracks go/java files
+PASS  checkStale available after scan
+PASS  checkStale reports clean tree
+PASS  checkStale detects modified file
+PASS  checkStale detects added file
+PASS  checkStale detects removed file
+PASS  checkStale names touched modules
+PASS  checkStale degrades without hashes.json
+PASS  pages generated
+PASS  no module page leaks the secret
+PASS  ledger extractor sees decisions
+PASS  ledger keeps the pointer+rationale decision
+PASS  ledger drops the bare claim
+PASS  ledger reviews the closure verdict
+PASS  candidates.md starts with the KEEP section
+PASS  candidates.md states the tier counts
+PASS  recall refuses a ../ traversal
+PASS  recall refuses an absolute path
+PASS  recall still reads a normal relative file
+PASS  recall output is redacted
+
+v99 knowledge hardening smoke: 32 passed, 0 failed
+PASS  SKILL.md and SKILL_BODY are byte-identical
+[pipeline] 宿主缺少必需 API：subagents.sendMessage。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+
+registration
+  ✓ 19 tools registered
+  ✓ 7 commands registered
+  ✓ one board route registered
+
+A locks a run; B must not inherit it
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kinf7a\proj-a
+  ✓ A lock returns a run id
+  ✓ A wrote its own lock file
+  ✓ B did not get a copied lock file
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kinf7a\proj-b
+  ✓ B status is a fresh idle workspace
+  ✓ B still has no lock file after a status call
+  ✓ A still owns its run
+  ✓ A requirement survived the B call
+
+plan -> spawn -> child decompose lands in A
+  ✓ spawn returns a childId
+  ✓ spawn records scopeDir
+  ✓ child decompose ran in the parent store
+  ✓ child scopeDir did not get its own .dsh
+  ✓ A board received the subtasks
+
+guard: tier matrix is fail-closed
+  ✓ guard was registered
+  ✓ L1 cannot call pipeline_execute_local
+  ✓ child cannot call pipeline_status
+  ✓ child may call pipeline_decompose
+
+/pipe-stop actually freezes dispatch
+  ✓ paused run blocks spawn
+
+run footer renders on arrays
+  ✓ status render returns an array
+  ✓ footer block was appended
+  ✓ footer shows the pause marker
+
+board route picks ?workspace=
+  ✓ route returns 200 for B
+  ✓ route reports the B workspace key
+  ✓ route reports two stores
+  ✓ board lists both known workspaces
+  ✓ switcher list carries project names
+  ✓ switcher list marks the active workspace
+  ✓ unknown workspace is a 404
+
+mode=off blocks dispatch (new apply)
+[pipeline] 宿主缺少必需 API：subagents.sendMessage。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+  ✓ mode=off denies spawn
+
+unattributed caller is refused (fail-closed)
+[pipeline] 宿主缺少必需 API：subagents.sendMessage。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+  ✓ unknown tier denies spawn
+
+client widget follows the current workspace
+  ✓ client reads the main-view session cwd
+  ✓ client offers a follow-current-workspace entry
+  ✓ client clears the legacy persisted pick
+  ✓ rail and card share the pick hook
+
+cold start restores per workspace
+[pipeline] 宿主缺少必需 API：subagents.sendMessage。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kinf7a\proj-b
+  ✓ cold board answers 200
+  ✓ cold board restores the newest known workspace
+  ✓ cold board lists the known workspaces
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kinf7a\proj-a
+  ✓ cold board can load A from disk by key
+  ✓ loaded A restores its run
+  ✓ a session cwd subdirectory resolves to its project root
+  ✓ the subdirectory probe did not create a nested store
+  ✓ cold start restores A lock
+  ✓ cold start keeps B empty
+  ✓ B still does not inherit A run
+
+a daemon with no known workspace shows idle, not an error
+[pipeline] 宿主缺少必需 API：subagents.sendMessage。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
+  ✓ cold board without state answers 200 idle
+  ✓ idle snapshot is marked idle in debug
+
+48 passed, 0 failed
+
+assertion parsing
+  ✓ parses == and ===
+  ✓ no assertion -> null runner
+
+JavaScript runner
+  ✓ JS pass runs
+  ✓ JS pass is 1/1
+  ✓ JS wrong result is 0/1
+  ✓ JS require is blocked
+
+Python runner
+  ✓ Python pass runs
+  ✓ Python pass is 1/1
+  ✓ Python wrong result is 0/1
+  ✓ Python import/os.system is blocked
+  ✓ Python syntax error fails closed
+
+execution switch
+  ✓ allowCodeExecution=false refuses to run
+
+subtask gate
+  ✓ gate accepts correct JS
+  ✓ gate requires every assertion
+  ✓ gate rejects a mismatched subtask_id
+  ✓ 2/2 assertions required to pass
+  ✓ 0/2 assertions fail the gate
+  ✓ blocked code fails closed (no semantic rescue)
+  ✓ no-assertion acceptance still uses the semantic score
+  ✓ semantic fallback is capped below the default gate
+
+task gate
+  ✓ task gate runs assertions on concatenated code
+  ✓ task gate refuses an empty subtask list
+  ✓ task gate rejects wrong code
+  ✓ task gate falls back to semantic only without assertions
+
+role matrix (guards)
+  ✓ L1 may spawn
+  ✓ L1 may send
+  ✓ L2 may decompose
+  ✓ L2 may execute local
+  ✓ L2 may not spawn L2
+  ✓ L2 may not call status
+  ✓ L1 may not execute local
+  ✓ L1 may not decompose
+  ✓ unknown may not advance
+  ✓ unknown may not call status
+
+34 passed, 0 failed
+
+plan preserves finished work
+  ✓ re-plan over a done-unaccepted milestone is refused
+  ✓ done task state survives re-plan
+  ✓ milestone is still pending until accepted
+
+acceptance needs the user
+  ✓ accept without userConfirmed is refused
+  ✓ accept with userConfirmed succeeds
+  ✓ accepted milestone is carried across re-plan
+
+drain failure is reported
+  ✓ failed drain returns ok:false
+  ✓ failed drain marks the agent failed
+  ✓ successful drain returns ok:true
+  ✓ successful drain marks the agent done
+
+re-dispatch is bounded
+  ✓ third spawn of the same module is refused
+
+counters survive a cold start
+  ✓ counters restored from board.json
+
+L2 decomposition is counted
+  ✓ decompose uses the LLM path
+  ✓ decomposition tokens are recorded
+  ✓ decomposition counter is incremented
+
+takeover files count toward maxFilesPerRun
+  ✓ register_output records the file
+
+16 passed, 0 failed
+
+B4 — per-subtask acceptance from pipeline_decompose
+  ✓ subtask created
+  ✓ acceptance comes from the L2 output, not the module
+  ✓ decompose echoes the per-subtask acceptance
+  ✓ string payload falls back to module acceptance
+  ✓ LLM failure reports why it fell back
+
+B3 — paths are confined to the workspace
+  ✓ register_output refuses an absolute path
+  ✓ register_output refuses a .. escape
+  ✓ review refuses an absolute filePath
+
+B7/O6 — execute writes the file, review gates the file on disk
+  ✓ file written to the workspace
+  ✓ result carries path/lines/sha8, not the code
+  ✓ board keeps the relative path
+  ✓ written bytes match the generated code
+  ✓ review gates the real file
+  ✓ review adds a file-on-disk check
+
+B7 — a missing deliverable fails the gate
+  ✓ second file written
+  ✓ missing file is a gate failure
+  ✓ gate names the missing file
+
+O1/B1 — status is a compact projection
+  ✓ status payload stays compact (2796 chars)
+  ✓ agents are projected (no code field)
+  ✓ agent desc is capped
+  ✓ task desc is capped
+  ✓ recentMessages are projected to a capped note
+  ✓ verbose restores the full task text
+
+O2 — checkpoint returns metadata
+  ✓ checkpoint file written
+  ✓ return has path/bytes/lines
+  ✓ document is NOT echoed by default
+  ✓ coldStartPrompt is still returned
+  ✓ verbose restores the full document
+
+v111 smoke: 28 passed, 0 failed
+
+B9 — CJK-aware token estimate
+  ✓ CJK estimate is above length/4
+  ✓ same-length ASCII estimate is smaller
+  ✓ estimate is at least 1
+
+B2 — config validation typo fixed
+  ✓ level3MaxOutputTokens 0 is rejected
+  ✓ allowLevel1Takeover is a documented key
+  ✓ allowLevel1Takeover defaults to false
+  ✓ maxLevel3Retries fallback is 5
+
+O4 — protocol text is short, mode-off text exists
+  ✓ protocol text < 1200 chars
+  ✓ protocol still names the L2/L3 boundary
+  ✓ off text names mode=off
+
+B5 — L1 takeover exception is explicit
+  ✓ review denied for L1 by default
+  ✓ review allowed for L1 with allowLevel1Takeover
+  ✓ execute_local still denied with takeover on
+  ✓ takeover does not apply to execute tools
+  ✓ L2 review stays allowed (no L1-only rule)
+
+B6 — footer stays off the result value (WeakMap keyed by the value)
+  ✓ render appends the footer
+  ✓ result value stays plain JSON (host validates it)
+  ✓ no footer when the value has none
+
+O3 — plan echoes a routing skeleton
+  ✓ lean plan omits acceptance
+  ✓ verbose plan keeps acceptance
+  ✓ lean plan caps desc
+
+O7/B14 — status separates tracked / measured tokens
+  ✓ status reports trackedTokens
+  ✓ status reports measuredTokens from the meter
+  ✓ status reports the budget number
+  ✓ agent carries measured tokens
+  ✓ level1Context is sourced from the meter
+  ✓ status has no verbose payload everywhere (compact)
+
+B15 — selftest separates ok from ready
+  ✓ ok is true when the check ran
+  ✓ ready is false with no L3 engine
+  ✓ degraded names the L3 engine
+
+B11/O10 — compact board.json and trace replay on restore
+  ✓ board.json is compact JSON
+  ✓ restore replays trace messages
+
+O8 — mode=off registers only the diagnostic subset
+  ✓ mode=off keeps status
+  ✓ mode=off keeps scan/recall
+  ✓ mode=off drops spawn_module_lead
+  ✓ mode=off drops execute_local
+  ✓ mode=off keeps 6 of 19 tools
+[pipeline] 宿主缺少必需 API：subagents service、sessions service、llm service。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
+[pipeline] 宿主缺少可选 API：tokenMeter service；上下文计量退回估算，读数偏小（功能可用）。
+  ✓ mode=auto registers 19 tools
+  ✓ mode=auto registers spawn_module_lead
+  ✓ mode=auto registers the full protocol section
+
+40 passed, 0 failed
+[pipeline] L3 engine self-check failed (http://127.0.0.1:8080/v1): fetch failed. Run /pipe-selftest after starting the engine.

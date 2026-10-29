@@ -1,4 +1,4 @@
-// dsh-pipeline — prompt builders: L1 routing protocol, L2 lead prompt, L3 executor
+// dsh-tripipelines — prompt builders: L1 routing protocol, L2 lead prompt, L3 executor
 // prompt. Pure string assembly (no services, no state).
 import { join, resolve } from 'node:path'
 

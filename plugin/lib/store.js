@@ -1,4 +1,4 @@
-// dsh-pipeline — per-workspace state: the in-memory board, the JSONL trace, the
+// dsh-tripipelines — per-workspace state: the in-memory board, the JSONL trace, the
 // persisted run state machine, and the workspace activation memory.
 import { existsSync, appendFileSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'

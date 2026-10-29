@@ -1,4 +1,4 @@
-// dsh-pipeline — native DSH plugin implementing a three-tier
+// dsh-tripipelines — native DSH plugin implementing a three-tier
 // model collaboration system:
 //   Level 1 (coordinator) -> Level 2 (module leads) -> Level 3 (local executors)
 //

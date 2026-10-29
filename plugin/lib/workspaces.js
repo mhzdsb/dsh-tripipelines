@@ -1,4 +1,4 @@
-// dsh-pipeline — per-workspace store registry (v103).
+// dsh-tripipelines — per-workspace store registry (v103).
 //
 // Before v103 a single process-wide store was re-homed on every tool call
 // (`r.alignTo`): whichever workspace called last owned the global `stateDir`,

@@ -1,8 +1,16 @@
 {
-  "name": "dsh-pipeline",
-  "version": "1.20.1",
+  "name": "dsh-tripipelines",
+  "version": "1.21.0",
   "description": "Three-tier model collaboration plugin for DeepSeek Harness: L1 coordinator (any model the user picks) -> L2 (flash) module leads -> L3 (local engine) executors, with strict adjacency, long-lived L2, per-task acceptance, quality gates, per-workspace run state, per-module work directories, and a live GUI status board.",
   "author": "merhentz",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "pipeline",
+    "orchestration",
+    "multi-agent"
+  ],
   "type": "module",
   "main": "lib/plugin.js",
   "exports": {

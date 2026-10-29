@@ -1,4 +1,4 @@
-// dsh-pipeline — Level-2/3 tool factories: LLM decomposition, the L3 executor core
+// dsh-tripipelines — Level-2/3 tool factories: LLM decomposition, the L3 executor core
 // (executeOneL3Task + single/batch dispatch), review, takeover registration and the
 // one-shot local-executor spawn.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'

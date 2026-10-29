@@ -1,11 +1,11 @@
-release v113 (version 1.20.1)
+release v114 (version 1.21.0)
   source   C:\Users\Merhnztz\Documents\Vibecoding\DSH\Merhentz_plugin\plugin
-  snapshot C:\Users\Merhnztz\.dsh\dsh-pipeline-v113
+  snapshot C:\Users\Merhnztz\.dsh\dsh-tripipelines-v114
 
-PASS  CHANGELOG.md has a v113 entry
-PASS  CHANGELOG v113 entry names version 1.20.1
-PASS  source package.json version is 1.20.1
-PASS  board-route BUILD_TAG is v113
+PASS  CHANGELOG.md has a v114 entry
+PASS  CHANGELOG v114 entry names version 1.21.0
+PASS  source package.json version is 1.21.0
+PASS  board-route BUILD_TAG is v114
 PASS  SKILL.md and SKILL_BODY are byte-identical
 PASS  test skill_sync_check.mjs
 [pipeline] 宿主缺少必需 API：subagents.sendMessage。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
@@ -17,11 +17,11 @@ registration
   ✓ one board route registered
 
 A locks a run; B must not inherit it
-[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-hqnogl\proj-a
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kuxj7b\proj-a
   ✓ A lock returns a run id
   ✓ A wrote its own lock file
   ✓ B did not get a copied lock file
-[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-hqnogl\proj-b
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kuxj7b\proj-b
   ✓ B status is a fresh idle workspace
   ✓ B still has no lock file after a status call
   ✓ A still owns its run
@@ -76,11 +76,11 @@ client widget follows the current workspace
 cold start restores per workspace
 [pipeline] 宿主缺少必需 API：subagents.sendMessage。本插件需要带 startActivation / sessions / llm 的 DSH 构建；请升级宿主或关闭插件（否则工具会在调用时报错）。
 [pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。
-[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-hqnogl\proj-b
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kuxj7b\proj-b
   ✓ cold board answers 200
   ✓ cold board restores the newest known workspace
   ✓ cold board lists the known workspaces
-[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-hqnogl\proj-a
+[pipeline] workspace store ready: c:\users\merhnztz\appdata\local\temp\dsh-v103-kuxj7b\proj-a
   ✓ cold board can load A from disk by key
   ✓ loaded A restores its run
   ✓ a session cwd subdirectory resolves to its project root
@@ -622,19 +622,19 @@ PASS  reset warns about project layer
 
 v82 verification: 82 passed, 0 failed
 PASS  test verify-v82.mjs
-PASS  snapshot written (29 files, version 1.20.1)
-PASS  v113: snapshot identical to source (29 files)
-PASS  v113: package.json version 1.20.1 matches source
+PASS  snapshot written (29 files, version 1.21.0)
+PASS  v114: snapshot identical to source (29 files)
+PASS  v114: package.json version 1.21.0 matches source
 
 snapshot is ready. Now do the two GUI steps (cannot be automated from here):
 
-  1) plugin_manager action=remove_bundle target='dsh-pipeline'
-  2) plugin_manager action=install_bundle target='C:/Users/Merhnztz/.dsh/dsh-pipeline-v113'
-  3) plugin_manager action=list_plugins  → confirm version + source under .dsh/dsh-pipeline-v113
+  1) plugin_manager action=remove_bundle target='dsh-tripipelines'
+  2) plugin_manager action=install_bundle target='C:/Users/Merhnztz/.dsh/dsh-tripipelines-v114'
+  3) plugin_manager action=list_plugins  → confirm version + source under .dsh/dsh-tripipelines-v114
 
 then verify (三查):
   - listTools            → new tools present
-  - version              → 1.20.1
-  - CHANGELOG.md         → ## v113
+  - version              → 1.21.0
+  - CHANGELOG.md         → ## v114
 
 after install, re-run: node dev/release.mjs --verify

@@ -1,4 +1,4 @@
-// dsh-pipeline — pure helpers and shared constants (no DSH service access).
+// dsh-tripipelines — pure helpers and shared constants (no DSH service access).
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 
 // Task lifecycle states on the board.

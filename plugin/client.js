@@ -1,4 +1,4 @@
-// dsh-pipeline — Web UI half of the GUI board. ONE widget, ONE place: a small card in the
+// dsh-tripipelines — Web UI half of the GUI board. ONE widget, ONE place: a small card in the
 // sidebar foot dock (next to the cost/token entries) with a status pill, budget progress
 // bar and milestone count, polled from GET /pipeline/board (host half: lib/board-route.js).
 // There is deliberately no second seat: no composer strip and no floating card, so the
@@ -8,7 +8,7 @@
 // side-effect-free apart from returning the slot plugin; all resources are owned
 // by the slot registration and released on unload.
 window.__ModuleLoader__.load({
-  id: 'dsh-pipeline',
+  id: 'dsh-tripipelines',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -65,11 +65,12 @@ window.__ModuleLoader__.load({
     // localStorage, which pinned the card to a stale project across workspace
     // switches and refreshes; the explicit picker is now session-only, and clearing
     // the legacy key raises everyone back to "follow the current workspace".
-    const PICK_KEY = 'dsh-pipeline.workspace'
+    const PICK_KEY = 'dsh-tripipelines.workspace'
+    const LEGACY_PICK_KEYS = ['dsh-pipeline.workspace']
     let pickedKey = null
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.removeItem(PICK_KEY)
+        for (const k of [PICK_KEY, ...LEGACY_PICK_KEYS]) window.localStorage.removeItem(k)
       }
     } catch {
       /* storage unavailable -> nothing to clear */

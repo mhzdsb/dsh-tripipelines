@@ -1,6 +1,14 @@
 # 版本日志（CHANGELOG）
 
-> 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（`dsh-pipeline-vN`），版本号即迭代序号。
+> 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（v114 起为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`），版本号即迭代序号。
+
+## v114 — 1.21.0（改名 dsh-tripipelines，准备发布 npm / market）
+
+### 变更
+- npm 包名 `dsh-pipeline` 已被他人占用（owner `tudamu`，0.0.1 占位），发布名改为 **`dsh-tripipelines`**（已确认 npm 上可用）。功能无变化，仅包身份与安装命令变化。
+- 同步改名：`cordis.patch.yml` 的 bundle 名、Web 客户端 loader `id`、`package.json`、README / QUICKSTART / TUTORIAL 的安装命令、`dev/release.mjs` 的快照目录前缀与 GUI 步骤文案。
+- 兼容：客户端启动时清除旧 localStorage 键 `dsh-pipeline.workspace`；旧快照目录 `~/.dsh/dsh-pipeline-v*` 不再被发布脚本 `--verify` 列出，仍可手工回滚。
+- `package.json` 新增 `keywords`（deepseek-harness / dsh / dsh-plugin / pipeline / orchestration / multi-agent），便于 market 与 npm 搜索命中；版本 1.20.1 → 1.21.0。
 
 ## v113 — 1.20.1（修复 v112 的 footer 宿主校验错误）
 

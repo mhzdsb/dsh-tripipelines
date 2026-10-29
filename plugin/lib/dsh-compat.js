@@ -1,4 +1,4 @@
-// dsh-pipeline — DSH compatibility helpers: best-effort session resolution and
+// dsh-tripipelines — DSH compatibility helpers: best-effort session resolution and
 // L1 context pressure measurement (tokenMeter). Kept in one place so a DSH
 // service-API change only ever touches this file.
 export function resolveSession(ctx, source) {

@@ -1,4 +1,4 @@
-# dsh-pipeline · 流水线
+# dsh-tripipelines · 流水线
 
 > **强模型掌舵，弱模型干活。** 把大活拆成每个模型都吃得下的份量——花钱花在刀刃上，代码写得经得起十年。
 
@@ -50,8 +50,9 @@
 装插件 → 配本地引擎 → 说第一句话。三步详细版见 **[QUICKSTART.md](QUICKSTART.md)**。
 
 ```bash
-# 1. 安装（DSH 插件管理器 / GUI，或 Host 工具）
-plugin_manager install_bundle('C:/path/to/dsh-pipeline')
+# 1. 安装（发布后走 npm / market；本地开发用快照 link）
+dsh plugin --profile <profile> add dsh-tripipelines        # npm / market（发布后）
+plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地快照 / dev
 
 # 2. 确认三级都活着
 /pipe-selftest
@@ -114,11 +115,11 @@ plugin_manager install_bundle('C:/path/to/dsh-pipeline')
 
 - **方式 A（推荐）**：DSH 插件管理器 GUI 或 `plugin_manager install_bundle`，指向插件目录。
 - **方式 B**：`dsh plugin add <绝对路径>`（需要 pnpm）。
-- **方式 C（手动）**：junction 到 `profiles/<profile>/node_modules/dsh-pipeline`，并在 profile 的 `cordis.patch.yml` 追加：
+- **方式 C（手动）**：junction 到 `profiles/<profile>/node_modules/dsh-tripipelines`，并在 profile 的 `cordis.patch.yml` 追加：
   ```yaml
   - insert:
       - id: pipeline
-        name: 'dsh-pipeline'
+        name: 'dsh-tripipelines'
   ```
 
 ### 验证
@@ -244,7 +245,7 @@ pipeline_ledger()            # 从交接文档抽决策候选
 ## 目录结构
 
 ```
-dsh-pipeline/
+dsh-tripipelines/
 ├── package.json                          # 插件清单（dsh.bundle.patch → cordis.patch.yml；dsh.client → Web 状态条）
 ├── cordis.patch.yml                      # bundle 补丁（插入插件行）
 ├── client.js                             # Web UI 看板卡片（左侧栏底部，2.5s 轮询 /pipeline/board）

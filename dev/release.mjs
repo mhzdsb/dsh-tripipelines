@@ -93,11 +93,11 @@ function verifySnapshot(snapshotDir, label) {
 
 if (verifyOnly) {
   const all = existsSync(snapshotsRoot)
-    ? readdirSync(snapshotsRoot).filter((n) => /^dsh-pipeline-v\d+[a-z]?$/.test(n))
+    ? readdirSync(snapshotsRoot).filter((n) => /^dsh-tripipelines-v\d+[a-z]?$/.test(n))
       .map((n) => ({ name: n, num: Number((n.match(/v(\d+)/) ?? [])[1] ?? 0) }))
       .sort((a, b) => a.num - b.num)
     : []
-  if (!all.length) fail('no dsh-pipeline-v* snapshot under ~/.dsh')
+  if (!all.length) fail('no dsh-tripipelines-v* snapshot under ~/.dsh')
   if (all.length > 1) {
     console.log(`note: ${all.length} snapshots found; verifying only the newest (${all.at(-1).name}).`)
     console.log('      older snapshots are historical and intentionally differ from source.')
@@ -113,7 +113,7 @@ if (verifyOnly) {
 // ---------------------------------------------------------------- release mode
 if (!tag) { console.error('usage: node dev/release.mjs vNN[x] [--version x.y.z] [--dry] | --verify'); process.exit(2) }
 if (!/^\d+\.\d+\.\d+$/.test(String(version))) { console.error(`bad version: ${version}`); process.exit(2) }
-const snapshotDir = join(snapshotsRoot, `dsh-pipeline-${tag}`)
+const snapshotDir = join(snapshotsRoot, `dsh-tripipelines-${tag}`)
 
 console.log(`release ${tag} (version ${version})`)
 console.log(`  source   ${pluginDir}`)
@@ -192,9 +192,9 @@ if (dry) {
 }
 console.log('snapshot is ready. Now do the two GUI steps (cannot be automated from here):')
 console.log('')
-console.log("  1) plugin_manager action=remove_bundle target='dsh-pipeline'")
+console.log("  1) plugin_manager action=remove_bundle target='dsh-tripipelines'")
 console.log(`  2) plugin_manager action=install_bundle target='${snapshotDir.replace(/\\/g, '/')}'`)
-console.log(`  3) plugin_manager action=list_plugins  → confirm version + source under .dsh/dsh-pipeline-${tag}`)
+console.log(`  3) plugin_manager action=list_plugins  → confirm version + source under .dsh/dsh-tripipelines-${tag}`)
 console.log('')
 console.log('then verify (三查):')
 console.log('  - listTools            → new tools present')
