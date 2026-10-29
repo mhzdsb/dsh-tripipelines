@@ -52,7 +52,7 @@ if (patched === configSrc) {
 writeFileSync(join(tmp, 'config.js'), patched, 'utf8')
 const storeSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8')
 const storePatched = storeSrc.replace(
-  "return join(root ?? process.cwd(), '.dsh', 'pipeline')",
+  "return join(base, '.dsh', 'pipeline')",
   `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
 )
 if (storePatched === storeSrc) {

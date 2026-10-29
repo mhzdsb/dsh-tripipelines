@@ -89,7 +89,7 @@ try {
   mkdirSync(join(out, 'research'), { recursive: true })
   writeFileSync(
     join(out, 'research', '2026-10-29-path.md'),
-    '# 研讨：下一步投哪条路径\n\n## 2. 证据\n- E1 见 bench/result.json:12，吞吐提升 1.8x\n',
+    '# 研讨：下一步投哪条路径\n\n## 2. 证据\n- E1 见 bench/result.json:12，吞吐提升 1.8x\n\n## 7. 记录\n- 结论：走 SQLite 分页，放弃内存索引\n',
   )
   const hit4 = recall({ knowledgeDir: out, query: '吞吐' })
   ok('recall indexes research notes by default', hit4.hits.some((h) => h.source.startsWith('research/')), JSON.stringify(hit4.hits.slice(0, 2)))

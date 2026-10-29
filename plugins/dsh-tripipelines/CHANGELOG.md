@@ -2,6 +2,17 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（v114 起为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`），版本号即迭代序号。
 
+## v118 — 1.22.0（隔离契约 + 检索语义）
+
+### 变更
+- **P1 路径收口**：新增 `resolveInside(root, p)`；`pipeline_scan` / `pipeline_ledger` 的 `root`、`pipeline_checkpoint` 的 `path`、`resumeFrom`、`scopeDir`、`devDir` 只接受工作区内的路径，绝对路径与 `..` 越界直接报错（带修正提示）。此前在 B 项目执行 `pipeline_scan({root:'A'})` 会把 A 的内容写进 B 的知识库。
+- **P2 去兜底**：`createStore` / `runtimeStateDir` / `executeAcceptance` 不再回退 `process.cwd()`，缺工作区根时显式报错（避免把状态写进 DSH profile 目录）。
+- **recall 语义**：命中带 `kind`（code / decision / candidate / research）；返回 `coverage`、`partial`、`generatedAt`（hashes.json 优先，mtime 兜底）、`rootMismatch`；未填完的 `/pipe-research` 草稿（第 7 节无正文）不参与检索；去掉「没有 index.md 就报错」的硬前置——有任何可检索文件即返回结果并标 `partial`，真的空才报错。
+- **只读项目内容**：不新增 `pipeline_decide`、不写 `decisions.json` 侧车、不创建/修改项目 `decisions.md`；项目已有 `dev/decisions.md` 时以只读外部目标加入检索。
+- 测试：新增 `dev/smoke/v118_isolation_smoke.mjs`（45 断言）；修 `dev/smoke/verify-v82.mjs` / `v89` / `v90` / `v92` 的 store patch 锚点与 `createStore` 调用；`v98` 的 research fixture 补第 7 节。全量 13 套件绿。
+- 文档：README 新增「隔离与检索语义（v118）」、TUTORIAL §4.9、design doc §19、SKILL.md Phase 0 两行（已同步字节校验）。
+- 版本 1.21.3 → 1.22.0（行为变化：越界参数从静默接受变为报错）。
+
 ## v117 — 1.21.3（知识层文档补全 + 研讨笔记可检索）
 
 ### 变更

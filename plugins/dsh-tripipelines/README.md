@@ -245,6 +245,16 @@ pipeline_ledger()            # 从交接文档抽决策候选
 
 > 研讨层目前是手动触发：先跑 2~3 次，确认真能减少返工，再谈自动阈值。
 
+### 隔离与检索语义（v118）
+
+知识层天生要读项目、写知识库，所以 v118 把边界写成契约并用测试锁住：
+
+- **只写当前工作区**：`pipeline_scan` / `pipeline_ledger` 的 `root`、`pipeline_checkpoint` 的 `path`、`pipeline_spawn_module_lead` 的 `resumeFrom` / `scopeDir`、`devDir` 配置都只接受工作区内的路径；绝对路径或 `..` 越界直接报错，不会在 B 项目里写入 A 项目的内容。
+- **不碰项目仓库**：插件不创建 `decisions.md`、不写 `dev/`、不替项目做决策；项目自己维护的 `dev/decisions.md` 只会被只读检索。
+- **检索结果带证据等级**：每条命中带 `kind`（`code` / `decision` / `candidate` / `research`），并返回 `coverage`（scan / modules / candidates / decisions / researchFilled / researchDrafts）、`partial`、`generatedAt`（取 scan 的 `hashes.json`，不是文件 mtime）、`rootMismatch`（知识库属于别的工作区时告警）。
+- **未填完的研讨不参与检索**：只有第 7 节有正文的 `research/*.md` 才算已填，模板骨架不会被当成结论。
+- **不猜工作区**：没有会话 cwd / 工作区根时工具直接报错，不再回退到进程 cwd 把状态写进 DSH profile 目录。
+
 ## 版本
 
 - **包版本**（`package.json`）：语义化 `x.y.z`，市场/发布用。

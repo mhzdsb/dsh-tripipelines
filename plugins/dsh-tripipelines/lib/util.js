@@ -1,5 +1,6 @@
 // dsh-tripipelines — pure helpers and shared constants (no DSH service access).
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { isAbsolute, relative, resolve } from 'node:path'
 
 // Task lifecycle states on the board.
 export const TASK_STATES = ['pending', 'in_progress', 'review', 'done', 'failed']
@@ -28,6 +29,31 @@ export function contentText(blocks) {
 // Create a directory (and its parents) when missing.
 export function ensureDir(dir) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+}
+
+// v118 — every path a tool writes to must stay inside the calling workspace.
+// `..` segments, absolute paths and symlinked escapes are the three ways a
+// model-supplied path can reach another project (or the user's home dir), so
+// this is the single gate: resolve, then refuse anything outside the root.
+// Absolute paths are allowed only when they already point inside the root
+// (the UI may pass one); everything else is rejected with an actionable error.
+export function resolveInside(root, p, label = 'path') {
+  const base = String(root ?? '').trim()
+  if (!base) throw new Error(`${label}: 无法定位工作区根目录（v118 不再回退到进程 cwd）。`)
+  const raw = String(p ?? '').trim()
+  if (!raw) throw new Error(`${label}: 路径不能为空。`)
+  const abs = resolve(base, raw)
+  const rel = relative(resolve(base), abs)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`${label}: "${raw}" 越出了工作区 "${base}"——只允许写/读工作区内的路径（v118 隔离契约）。`)
+  }
+  return abs
+}
+
+// Normalized comparison used by the recall rootMismatch check.
+export function sameRoot(a, b) {
+  const norm = (v) => resolve(String(v ?? '')).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  return norm(a) === norm(b)
 }
 
 // Rough token estimate. Latin text is ~4 chars/token, but CJK is ~1-1.6

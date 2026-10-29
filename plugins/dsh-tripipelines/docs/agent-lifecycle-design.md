@@ -270,3 +270,13 @@ L1 是唯一协调者（唯一和用户对话、唯一终审），因此有单�
 **闭环**：研讨结论写回 `decisions.md` 或 checkpoint 的决策节；v117 起 `pipeline_recall` 默认把 `research/*.md` 纳入检索目标，于是「研讨 → 决策 → 未来检索」形成闭环，而不是写进文件就烂掉。
 
 **刻意没做**：自动触发研讨（阈值难以验证，目前手动跑 2~3 次再评估）；自动判定研讨质量（模型自评不可靠，靠第 7 步的「错了会怎么暴露」约束）。
+
+## 19. 隔离契约与检索语义（v118）
+
+**背景**：v117 把 `research/*.md` 纳入 recall 后，原「知识库不存在就直接报错」的前置变成过时的不变量；同时审计发现真正的跨项目风险不在 `process.cwd()` 兜底（生产路径不可达），而在显式路径参数。
+
+**隔离契约**：`resolveInside(root, p)` 统一收口 `pipeline_scan` / `pipeline_ledger` 的 `root`、`pipeline_checkpoint` 的 `path`、`resumeFrom`、`scopeDir`、`devDir`——空根、空路径、绝对路径、`..` 越界全部报错并给出修正提示。`createStore` / `runtimeStateDir` / `executeAcceptance` 不再回退 `process.cwd()`。插件只写 `<workspace>/.dsh/pipeline/` 与 devDir 内的流程文档，不写项目源文件、不创建 `decisions.md`。
+
+**检索语义**：`recall` 返回 `kind`（code / decision / candidate / research）、`coverage`、`partial`（无 `index.md` 但已有内容时仍可检索并标注）、`generatedAt`（hashes.json 优先，mtime 兜底）、`rootMismatch`（`hashes.json.root` 与当前工作区不一致）；`research/*` 只收「第 7 节有正文」的笔记，草稿不参与；项目 `dev/decisions.md` 以只读外部目标加入。
+
+**测试**：`dev/smoke/v118_isolation_smoke.mjs`（45 断言：路径越界拒绝、A/B 隔离、无根拒绝、recall 语义）+ v98/v99 兼容。

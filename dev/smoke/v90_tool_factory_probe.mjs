@@ -30,7 +30,7 @@ const cfgSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', ro
 writeFileSync(join(tmp, 'config.js'), cfgSrc, 'utf8')
 const stSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8')
   .replace(
-    "return join(process.cwd(), '.dsh', 'pipeline')",
+    "return join(base, '.dsh', 'pipeline')",
     `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
   )
 writeFileSync(join(tmp, 'store.js'), stSrc, 'utf8')
@@ -44,7 +44,7 @@ const l2 = await imp('tools/l2l3.js')
 const pluginMod = await imp('plugin.js')
 
 const cfg = { ...cfgMod.DEFAULT_CONFIG, stateDir: join(tmp, 'state') }
-const r = storeMod.createStore(cfg)
+const r = storeMod.createStore(cfg, { root: join(tmp, 'proj') })
 const ctx = {
   agent: { id: 'lead', sessionId: 's1' },
   llm: { stream: async () => ({ content: '["a","b"]' }) },

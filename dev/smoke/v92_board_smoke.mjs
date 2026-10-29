@@ -29,7 +29,7 @@ const cfgSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', ro
 )
 writeFileSync(join(tmp, 'config.js'), cfgSrc, 'utf8')
 const stSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8').replace(
-  "return join(root ?? process.cwd(), '.dsh', 'pipeline')",
+  "return join(base, '.dsh', 'pipeline')",
   `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
 )
 writeFileSync(join(tmp, 'store.js'), stSrc, 'utf8')
@@ -46,7 +46,7 @@ const cfg = { ...cfgMod.DEFAULT_CONFIG, stateDir: join(tmp, 'state') }
 // ---------------------------------------------------------------------------
 // 1. snapshot shape
 // ---------------------------------------------------------------------------
-const r = storeMod.createStore(cfg)
+const r = storeMod.createStore(cfg, { root: join(tmp, 'proj') })
 r.store.runId = 'run-test'
 r.store.requirement = 'build a calculator'
 r.store.locked = true
@@ -132,7 +132,7 @@ check('ready fallback registers route', !!readyRegistered && readyRegistered.pat
 // ---------------------------------------------------------------------------
 // 3. per-lead work directory: cwd + prompt + record
 // ---------------------------------------------------------------------------
-const r2 = storeMod.createStore(cfg)
+const r2 = storeMod.createStore(cfg, { root: join(tmp, 'proj') })
 const captured = []
 const subs = {
   startActivation: async (spec) => {
@@ -150,12 +150,12 @@ const out = await spawn.execute(
   exec,
 )
 check('spawn echoes scopeDir', out.scopeDir === 'src/calc')
-check('request.cwd is absolute scope dir', captured[0].request.cwd === resolve('src/calc'))
+check('request.cwd is absolute scope dir', captured[0].request.cwd === resolve(tmp, 'proj', 'src', 'calc'))
 check(
   'prompt carries WORK DIRECTORY block',
   String(captured[0].request.prompt[0].text).includes('WORK DIRECTORY (v92)') && String(captured[0].request.prompt[0].text).includes('src/calc'),
 )
-check('scope dir created on disk', existsSync(resolve('src/calc')))
+check('scope dir created on disk', existsSync(resolve(tmp, 'proj', 'src', 'calc')))
 check('agent record keeps scopeDir', r2.store.agents.get(out.childId)?.scopeDir === 'src/calc')
 
 // v94 — per-lead model: one module can run on a stronger model while the rest
@@ -171,7 +171,7 @@ check('snapshot exposes per-lead model', board.buildBoardSnapshot(r2, cfg).agent
 
 const out2 = await spawn.execute({ name: 'd b!', description: 'x', prompt: 'y', acceptance: 'z' }, exec)
 check('default scopeDir sanitized under .dsh/pipeline/work', out2.scopeDir === join('.dsh', 'pipeline', 'work', 'd_b_'))
-check('default scope dir created', existsSync(resolve(join('.dsh', 'pipeline', 'work', 'd_b_'))))
+check('default scope dir created', existsSync(resolve(tmp, 'proj', '.dsh', 'pipeline', 'work', 'd_b_')))
 
 // ---------------------------------------------------------------------------
 // 4. client bundle wiring (static)

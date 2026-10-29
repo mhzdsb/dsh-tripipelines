@@ -21,6 +21,12 @@ Taking over an EXISTING repo — read knowledge, not the whole tree (v98/v99):
 - At a bottleneck (architecture thrash, a two-way choice, repeated rework): /pipe-research "<topic>" →
   7-step note (evidence → candidates → counter-case → experiment → verdict). Fill it, write the verdict
   into decisions.md / checkpoint, and pipeline_recall finds it later (research notes are indexed since v117).
+- Isolation (v118): the plugin writes only `<workspace>/.dsh/pipeline/` plus devDir process docs; scan/ledger
+  root, checkpoint path, resumeFrom, scopeDir and devDir cannot leave the workspace (absolute / ".." → error);
+  it never creates or edits the project's `decisions.md` — that file is read-only input when it exists.
+- recall reports evidence level: each hit carries kind (code / decision / candidate / research) plus
+  coverage, partial (content exists but no scan yet), generatedAt (hashes.json, not mtime) and rootMismatch
+  (knowledge base belongs to another workspace); unfilled /pipe-research drafts are never searched.
 
 
 ## Phase 1 — Requirement interview (popup, multi-round)

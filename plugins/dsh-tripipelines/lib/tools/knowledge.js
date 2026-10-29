@@ -10,15 +10,29 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { text } from '../util.js'
+import { text, resolveInside } from '../util.js'
 import { resolveWorkspaceRoot } from '../dsh-compat.js'
 import { scanRepo, buildModulePages, checkStale } from '../knowledge/scan.js'
 import { extractDecisions } from '../knowledge/ledger.js'
 import { recall as recallHits } from '../knowledge/recall.js'
 
-const knowledgeDir = (r) => join(r?.store?.stateDir ?? process.cwd(), 'knowledge')
-const workspaceOf = (ctx, exec, args, r) =>
-  String(args?.root ?? '').trim() || r?.store?.workspaceRoot || resolveWorkspaceRoot(ctx, exec) || process.cwd()
+// v118 — no process.cwd() fallback: the daemon's cwd is the profile dir, and
+// writing a knowledge base there is how two projects end up sharing state.
+const knowledgeDir = (r) => {
+  const stateDir = r?.store?.stateDir
+  if (!stateDir) throw new Error('知识库不可用：当前调用没有绑定工作区（v118 隔离契约，不再回退到进程 cwd）。')
+  return join(stateDir, 'knowledge')
+}
+
+// Resolve the calling workspace; a supplied `root` must stay inside it.
+// Scanning another project and storing the result here is the cross-project
+// contamination path v118 closes (see docs/agent-lifecycle-design.md §19).
+const workspaceOf = (ctx, exec, args, r) => {
+  const base = r?.store?.workspaceRoot || resolveWorkspaceRoot(ctx, exec)
+  if (!base) throw new Error('无法定位当前工作区：请在项目目录内调用（插件按会话 cwd 绑定工作区）。')
+  const raw = String(args?.root ?? '').trim()
+  return raw ? resolveInside(base, raw, 'root') : base
+}
 
 const render = (_a, value) => text(JSON.stringify(value))
 
@@ -30,7 +44,7 @@ export function makeScanTool(ctx, cfg, r) {
       type: 'object',
       additionalProperties: false,
       properties: {
-        root: { type: 'string', description: 'Repo root (default: workspace).' },
+        root: { type: 'string', description: 'Repo root inside the current workspace (default: workspace).' },
         pages: { type: 'boolean', description: 'Also generate per-module pages (default true).' },
         check: { type: 'boolean', description: 'Stale only: changed/added/removed files + pages to rebuild.' },
       },
@@ -87,7 +101,7 @@ export function makeLedgerTool(ctx, cfg, r) {
       type: 'object',
       additionalProperties: false,
       properties: {
-        root: { type: 'string', description: 'Repo root (default: workspace).' },
+        root: { type: 'string', description: 'Repo root inside the current workspace (default: workspace).' },
       },
     },
     output: { schema: { type: 'object', additionalProperties: true }, render },
@@ -115,7 +129,8 @@ export function makeLedgerTool(ctx, cfg, r) {
 export function makeRecallTool(ctx, cfg, r) {
   return {
     name: 'pipeline_recall',
-    description: 'Keyword search over the knowledge base (index / decisions / module pages / research notes); returns file:line hits.',
+    description:
+      'Keyword search over the knowledge base (index / decisions / module pages / research notes, plus a project-owned dev/decisions.md read-only); returns file:line hits with a `kind` label (code / decision / candidate / research) and coverage.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -127,20 +142,45 @@ export function makeRecallTool(ctx, cfg, r) {
       },
     },
     output: { schema: { type: 'object', additionalProperties: true }, render },
-    async execute(args) {
+    async execute(args, exec) {
       const dir = knowledgeDir(r)
-      if (!existsSync(join(dir, 'index.md'))) {
-        return { ok: false, error: `knowledge base missing at ${dir} — run pipeline_scan first` }
-      }
+      const root = r?.store?.workspaceRoot || resolveWorkspaceRoot(ctx, exec)
+      if (!root) throw new Error('无法定位当前工作区：请在项目目录内调用（插件按会话 cwd 绑定工作区）。')
+      // The plugin never creates or edits this file; it only indexes a project
+      // decision log when the project already keeps one (v118 read-only boundary).
+      const devAbs = resolveInside(root, String(cfg?.devDir ?? 'dev'), 'devDir')
+      const extra = join(devAbs, 'decisions.md')
+      const extraTargets = existsSync(extra) ? [{ full: extra, rel: `${String(cfg?.devDir ?? 'dev').replace(/\\/g, '/')}/decisions.md`, kind: 'decision' }] : []
       const limit = Math.min(20, Math.max(1, Number(args?.limit) > 0 ? Number(args.limit) : 6))
-      const res = recallHits({ knowledgeDir: dir, query: args?.query ?? '', limit, files: Array.isArray(args?.files) ? args.files.map(String) : undefined })
+      const res = recallHits({
+        knowledgeDir: dir,
+        workspaceRoot: root,
+        extraTargets,
+        query: args?.query ?? '',
+        limit,
+        files: Array.isArray(args?.files) ? args.files.map(String) : undefined,
+      })
+      if (!res.hasContent) {
+        return { ok: false, error: `knowledge base empty at ${dir} — run pipeline_scan first (nothing indexed yet).` }
+      }
+      const hint = res.hits.length
+        ? res.partial
+          ? 'Hits are partial (no full scan yet): point at the files directly for anything absent. Cite sources; do not turn a `candidate`/`research` hit into a decision.'
+          : 'Cite these sources when you report; a `candidate` hit is not a decision, and a `research` hit is a discussion note.'
+        : res.partial
+          ? 'No hit and the knowledge base has no full scan — run pipeline_scan (or check the coverage field) before concluding the codebase lacks this.'
+          : 'No hit in the indexed knowledge. The scan covers code structure and docs it recorded; confirm with a targeted read before concluding.'
       return {
         ok: true,
         knowledgeDir: dir,
         terms: res.terms,
         hitCount: res.hits.length,
-        hits: res.hits.map((h) => ({ source: `${h.source}:${h.line}`, score: h.score, text: h.text })),
-        hint: res.hits.length ? 'Cite these sources when you report; do not paraphrase numbers from memory.' : 'No hit — the knowledge base does not cover this yet; ask the user or scan a narrower path.',
+        hits: res.hits.map((h) => ({ source: `${h.source}:${h.line}`, score: h.score, kind: h.kind, text: h.text })),
+        coverage: res.coverage,
+        partial: res.partial,
+        generatedAt: res.generatedAt,
+        ...(res.rootMismatch ? { rootMismatch: true, warning: 'knowledge base was scanned from a different workspace — re-run pipeline_scan' } : {}),
+        hint,
       }
     },
   }

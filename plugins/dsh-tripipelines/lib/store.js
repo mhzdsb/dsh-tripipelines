@@ -14,19 +14,26 @@ import { resolveSession, resolveSessionModel } from './dsh-compat.js'
 // config.json stays GLOBAL (CONFIG_FILE): the global default plus the
 // project-level <devDir>/pipeline-project.json overlay (v82) is what makes
 // config per-project.
+// v118 — the process cwd fallback is gone on purpose: it silently parked every
+// run under the DSH profile directory (or, worse, under whichever project the
+// daemon happened to start in). Callers must pass the resolved workspace root.
 export function runtimeStateDir(root) {
-  return join(root ?? process.cwd(), '.dsh', 'pipeline')
+  const base = String(root ?? '').trim()
+  if (!base) throw new Error('runtimeStateDir: workspace root is required（v118 不再回退到进程 cwd）。')
+  return join(base, '.dsh', 'pipeline')
 }
 
 export function createStore(cfg, opts = {}) {
   // v103 — a store's state dir is fixed at creation from the workspace root the
   // registry resolved. No later re-homing: a process-wide mutable stateDir is
   // exactly what made two projects overwrite each other's board.
-  const stateDir = opts.root ? runtimeStateDir(opts.root) : runtimeStateDir()
+  // v118 — root is mandatory; a store without a workspace is a bug, not a default.
+  if (!opts.root) throw new Error('createStore requires opts.root (the resolved workspace root)')
+  const stateDir = runtimeStateDir(opts.root)
   ensureDir(stateDir)
   const store = {
     stateDir,
-    workspaceRoot: opts.root ?? null,
+    workspaceRoot: opts.root,
     runId: null,
     requirement: null,
     locked: false,

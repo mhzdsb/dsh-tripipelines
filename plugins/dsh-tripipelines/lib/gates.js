@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { isPlainObj, RESULT_STATUS_OK, normalizeStatus, semanticScore } from './util.js'
-import { runtimeStateDir } from './store.js'
 
 // ---------------------------------------------------------------------------
 // Quality gates (DoD + JSON + semantic) — deterministic, mechanically checkable
@@ -138,6 +137,7 @@ function staticSafetyError(code, language) {
 export function executeAcceptance(code, acceptance, baseDir, cfg) {
   const assertions = extractAssertions(acceptance)
   if (assertions.length === 0) return null
+  if (!baseDir) throw new Error('executeAcceptance: baseDir is required（v118 不再回退到进程 cwd；调用方传 store.stateDir）。')
   if (cfg && cfg.allowCodeExecution === false) {
     return { ran: false, reason: 'execution-disabled', assertions, passed: 0, total: assertions.length }
   }
@@ -149,7 +149,7 @@ export function executeAcceptance(code, acceptance, baseDir, cfg) {
 
   // v89 — per-call scratch dir: concurrent L3 reviews no longer overwrite each other.
   // v103 — scratch lives under the calling WORKSPACE's state dir, not the daemon cwd.
-  const dir = join(baseDir ?? runtimeStateDir(), 'exec', randomUUID())
+  const dir = join(baseDir, 'exec', randomUUID())
   try { mkdirSync(dir, { recursive: true }) } catch { /* best-effort */ }
   const resultFile = join(dir, 'result.json')
   const cleanup = () => {

@@ -14,7 +14,11 @@ import { addRunUsage } from '../store.js'
 // v111 (B3) — confine to the workspace: absolute paths and `..` escapes are
 // refused, so a prompt-injected L2 cannot read/write files outside the project.
 function wsPath(r, p) {
-  const root = resolve((r && r.store && r.store.workspaceRoot) || process.cwd())
+  // v118 — no process.cwd() fallback: a missing workspace root is a bug, and
+  // falling back would park a relative path inside the profile directory.
+  const base = r && r.store && r.store.workspaceRoot
+  if (!base) throw new Error('wsPath: workspace root unavailable（v118 不再回退到进程 cwd）')
+  const root = resolve(base)
   const raw = String(p ?? '').trim()
   if (!raw) throw new Error('path must be a non-empty string')
   if (isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) {

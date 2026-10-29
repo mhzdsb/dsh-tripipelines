@@ -350,6 +350,16 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 
 ---
 
+---
+
+### 4.9 隔离与检索语义（v118）
+
+- 插件只写当前工作区的 `.dsh/pipeline/`（以及 devDir 里的流程文档）；`pipeline_scan` / `pipeline_ledger` 的 `root`、`pipeline_checkpoint` 的 `path`、`resumeFrom`、`scopeDir`、`devDir` 都只能在作区内，绝对路径或 `..` 会直接报错。
+- 插件不创建、不修改项目自己的 `decisions.md`；项目里有 `dev/decisions.md` 时，`pipeline_recall` 只读它。
+- `pipeline_recall` 的每条命中带 `kind`：`code`（index / 模块页）、`decision`（decisions.md）、`candidate`（ledger-candidates.md）、`research`（研讨笔记）。看到 `candidate` / `research` 别当已拍板结论用。
+- 返回里还有 `coverage`、`partial`、`generatedAt`（来自 `hashes.json`，不是 mtime）、`rootMismatch`。没有 `index.md` 但已有研讨笔记时 `partial:true`，仍可检索；从未扫描过则明确报「knowledge base empty」。
+- 没填完的研讨草稿（第 7 节没正文）不会出现在检索结果里——先填完再指望它被找回来。
+
 ## 5. 状态机与 Trace（审计）
 
 每个状态转移都会写一条消息（含消息头 `sender/state/group_id` 和消息体

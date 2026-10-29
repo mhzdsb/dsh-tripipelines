@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { text, LEVEL2_NAMES, TASK_STATES, estimateTokens, ensureDir, numCfg, jsonOutput } from '../util.js'
+import { text, LEVEL2_NAMES, TASK_STATES, estimateTokens, ensureDir, numCfg, jsonOutput, resolveInside } from '../util.js'
 import { validateTaskPlan, cleanupExpiredL2s } from '../gates.js'
 import { milestoneStates, loadActivation, saveActivation, addRunUsage, storeToBoard } from '../store.js'
 import { buildL2LeadPrompt } from '../prompts.js'
@@ -11,10 +11,12 @@ import { measureLevel1Context, measureSessionTokens, resolveWorkspaceRoot } from
 
 // v92.1 — workspace root for resolving relative scopeDir paths. v103 — the
 // registry store carries the fixed workspace root, so prefer it; the session
-// header is only a fallback (and process.cwd() is the profile dir, never the
-// project).
+// header is only a fallback. v118 — no process.cwd() fallback: the daemon cwd is
+// the profile dir, so a missing root is an error, not a silent relocation.
 function workspaceRoot(ctx, exec, r) {
-  return (r && r.store && r.store.workspaceRoot) || resolveWorkspaceRoot(ctx, exec) || process.cwd()
+  const root = (r && r.store && r.store.workspaceRoot) || resolveWorkspaceRoot(ctx, exec)
+  if (!root) throw new Error('无法定位当前工作区：请在项目目录内调用（插件按会话 cwd 绑定工作区；v118 不再回退到进程 cwd）。')
+  return root
 }
 
 // Resolve subagents or fail with an actionable diagnosis (never a bare "unavailable").
@@ -401,12 +403,18 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
       cleanupExpiredL2s(subs, exec.agent, r, cfg)
       let handoff = null
       if (args.resumeFrom) {
-        try { handoff = readFileSync(resolve(workspaceRoot(ctx, exec, r), args.resumeFrom), 'utf8') } catch { /* missing handoff file is non-fatal */ }
+        // v118 — resumeFrom is model input: it must stay inside the workspace.
+        // Resolve OUTSIDE the try so an escape attempt is an error, not a silent
+        // "handoff missing" (only a genuinely absent file is non-fatal).
+        const handoffPath = resolveInside(workspaceRoot(ctx, exec, r), args.resumeFrom, 'resumeFrom')
+        try { handoff = readFileSync(handoffPath, 'utf8') } catch { /* missing handoff file is non-fatal */ }
       }
       // v92 — per-lead work directory (real cwd isolation between modules).
       const rawScope = typeof args.scopeDir === 'string' && args.scopeDir.trim() ? args.scopeDir.trim().replace(/\\/g, '/') : ''
       const scopeRel = rawScope || join('.dsh', 'pipeline', 'work', String(args.name ?? 'lead').replace(/[^a-zA-Z0-9._-]+/g, '_'))
-      const scopeAbs = resolve(workspaceRoot(ctx, exec, r), scopeRel)
+      // v118 — an absolute or `..` scopeDir would put an L2's cwd outside this
+      // project; refuse instead of creating it there.
+      const scopeAbs = resolveInside(workspaceRoot(ctx, exec, r), scopeRel, 'scopeDir')
       try { ensureDir(scopeAbs) } catch { /* best-effort: a lead can still write absolute paths */ }
       const promptText = buildL2LeadPrompt(args.prompt, args.acceptance, cfg, handoff, scopeRel)
       const promptTokens = estimateTokens(promptText)
@@ -575,9 +583,10 @@ export function makeCheckpointTool(ctx, cfg, r) {
     execute(args, exec) {
       // Absolute paths: document + coldStartPrompt must work from another cwd.
       // v103 — default paths live under the calling WORKSPACE, never the daemon cwd.
+      // v118 — `path` and `devDir` are model/config input and must stay inside it.
       const root = workspaceRoot(ctx, exec, r)
-      const file = args.path ? resolve(root, args.path) : resolve(join(root, cfg.devDir, 'project_checkpoint.md'))
-      const handoffDir = join(root, cfg.devDir, 'team_board')
+      const file = args.path ? resolveInside(root, args.path, 'path') : resolveInside(root, join(cfg.devDir, 'project_checkpoint.md'), 'devDir')
+      const handoffDir = resolveInside(root, join(cfg.devDir, 'team_board'), 'devDir')
       const agents = [...r.store.agents.values()]
       const lines = [
         '# 项目交接文档 (checkpoint)',

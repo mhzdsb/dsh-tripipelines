@@ -1,7 +1,7 @@
 // dsh-tripipelines — configuration: defaults, layered merge, sweet-spot tuning,
 // and the /pipe-config command body. No DSH service access.
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
-import { join, dirname, resolve } from 'node:path'
+import { join, dirname, resolve, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { isPlainObj } from './util.js'
 
@@ -320,6 +320,14 @@ export function validateConfigValue(key, value) {
   }
   if (key === 'level3Provider' || key === 'spawnProvider') {
     if (!String(value).trim()) throw new Error(`${key} 不能为空`)
+  }
+  // v118 — devDir feeds checkpoint/handoff paths: it must stay inside the
+  // workspace, so an absolute path or `..` segment is a config error.
+  if (key === 'devDir') {
+    const s = String(value).trim().replace(/\\/g, '/')
+    if (!s) throw new Error('devDir 不能为空')
+    if (isAbsolute(s) || /^[A-Za-z]:/.test(s)) throw new Error(`devDir 必须是相对工作区根目录的路径，收到 "${value}"`)
+    if (s.split('/').includes('..')) throw new Error(`devDir 不能包含 ".."，收到 "${value}"`)
   }
 }
 

@@ -51,7 +51,7 @@ if (patchedConfig === configSrc) {
 writeFileSync(join(tmp, 'config.js'), patchedConfig, 'utf8')
 const storeSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8')
 const patchedStore = storeSrc.replace(
-  "return join(root ?? process.cwd(), '.dsh', 'pipeline')",
+  "return join(base, '.dsh', 'pipeline')",
   `return ${JSON.stringify(tmpState)}`,
 )
 if (patchedStore === storeSrc) {
@@ -93,7 +93,7 @@ check("level3Engine type enum", CONFIG_KEYS.level3Engine.type === 'enum' && CONF
 
 // --- 2) run state machine + persistence -----------------------------------
 const cfg = { ...DEFAULT_CONFIG, maxTotalTokensPerRun: 100, maxFilesPerRun: 2, maxDurationPerRun: 0 }
-const r = createStore(cfg)
+const r = createStore(cfg, { root: join(tmp, 'proj') })
 check('run starts idle', r.store.run.status === 'idle')
 check('run milestones starts empty', Array.isArray(r.store.run.milestones) && r.store.run.milestones.length === 0)
 r.store.run = freshRun({ id: 'r1', scope: ['src'] })
@@ -134,7 +134,7 @@ r.store.run.paused = false
 // --- 5) addRunUsage accumulates + auto-pauses -----------------------------
 // token cap uses maxFilesPerRun:0 so the file cap cannot fire first
 const cfgTok = { ...DEFAULT_CONFIG, maxTotalTokensPerRun: 100, maxFilesPerRun: 0, maxDurationPerRun: 0 }
-const r2 = createStore(cfgTok)
+const r2 = createStore(cfgTok, { root: join(tmp, 'proj') })
 r2.store.run = freshRun({ id: 'r2' })
 addRunUsage(r2, cfgTok, 60, ['a.js', 'b.js'])
 check('tokens accumulated', r2.store.run.tokensUsed === 60)
@@ -165,7 +165,7 @@ const board = {
   agents: [{ id: 'c1', kind: 'l2', label: 'backend', state: 'in_progress', estimatedTokens: 10 }],
 }
 writeFileSync(join(tmpState, 'board.json'), JSON.stringify(board, null, 2), 'utf8')
-const r3 = createStore(cfg)
+const r3 = createStore(cfg, { root: join(tmp, 'proj') })
 check('cold start restores active+paused run', r3.store.run.status === 'active' && r3.store.run.paused === true)
 check('cold start restores task', r3.store.tasks.has('t1') && r3.store.tasks.get('t1').state === 'done')
 check('cold start rebuilds subtaskIds', r3.store.tasks.get('t1').subtaskIds.includes('s1'))
@@ -176,16 +176,16 @@ check('cold start restores run_id', r3.store.runId === 'r2' || r3.store.run.id =
 // --- 8) executeAcceptance: per-call dir + cleanup -------------------------
 // NOTE: the harness executes PYTHON code (v53 design). JS/TS projects fall
 // back to the semantic score with ran:false, by design.
-const a1 = executeAcceptance('def add(a, b):\n    return a + b', 'add(2,3)==5')
+const a1 = executeAcceptance('def add(a, b):\n    return a + b', 'add(2,3)==5', tmpState)
 check('acceptance ran + passed', a1.ran === true && a1.passed === 1 && a1.total === 1)
-const a2 = executeAcceptance('def add(a, b):\n    return a + b', 'add(1,1)==3')
+const a2 = executeAcceptance('def add(a, b):\n    return a + b', 'add(1,1)==3', tmpState)
 check('acceptance detects failure', a2.ran === true && a2.passed === 0)
-const a3 = executeAcceptance('def broken(', 'x(1)==1')
+const a3 = executeAcceptance('def broken(', 'x(1)==1', tmpState)
 check('syntax error -> ran:false', a3.ran === false)
 const execRoot = join(tmpState, 'exec')
 const leftovers = existsSync(execRoot) ? readdirSync(execRoot) : []
 check('exec scratch dirs cleaned up', leftovers.length === 0, `leftovers=${leftovers.join(',')}`)
-const noAssertion = executeAcceptance('x', 'looks nice')
+const noAssertion = executeAcceptance('x', 'looks nice', tmpState)
 check('no assertion -> null', noAssertion === null)
 
 // --- cleanup ---------------------------------------------------------------
