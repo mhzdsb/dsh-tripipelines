@@ -91,6 +91,17 @@ export function findProjectRoot(cwd) {
   return resolve(cwd)
 }
 
+// A directory is a project only when it carries one of the markers the walk-up
+// understands. This keeps `?workspace=` from creating stores in arbitrary folders
+// (the Windows profile directory, a scratch path, the home directory, …).
+function hasProjectMarker(root) {
+  try {
+    return existsSync(join(root, '.git')) || existsSync(join(root, '.dsh', 'pipeline'))
+  } catch {
+    return false
+  }
+}
+
 function sessionOf(ctx, source) {
   try { return resolveSession(ctx, source) } catch { return undefined }
 }
@@ -214,9 +225,12 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile =
   }
 
   // Route selection: explicit ?workspace=<path|key> may name a workspace this
-  // daemon has not loaded yet (the switcher does exactly that) — load it from
-  // disk. The default is the workspace that called a pipeline tool most
-  // recently, then the newest known project.
+  // daemon has not loaded yet (the switcher and the follow-the-current-session
+  // path do exactly that) — load it from disk. An absolute directory that walks
+  // up to a project marker (`.git` or `.dsh/pipeline`) is accepted even when it
+  // was never registered, so the card follows the DSH workspace the user just
+  // switched to before any pipeline tool ran there. The default is the workspace
+  // that called a pipeline tool most recently, then the newest known project.
   function entryForRoute(rawQuery) {
     let wanted = null
     try {
@@ -229,11 +243,27 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile =
       if (!entry && key && known.has(key)) {
         try {
           if (existsSync(key)) entry = ensure(key)
+        } catch { /* fall through to the path probe */ }
+      }
+      // v110 — follow the session cwd, not just the known-workspace list: the
+      // sidebar widget sends the current session's cwd and must land on that
+      // project's store even on first sight. Only paths that resolve to a real
+      // project marker are accepted; a random directory never gets a store.
+      if (!entry && typeof wanted === 'string' && isAbsolute(wanted)) {
+        try {
+          if (existsSync(wanted)) {
+            const root = normalizeRoot(findProjectRoot(wanted))
+            if (root && hasProjectMarker(root)) {
+              entry = entries.get(root) ?? ensure(root)
+            }
+          }
         } catch { /* fall through to error */ }
       }
       if (entry) {
-        lastActiveKey = entry.key
-        record(entry.key)
+        if (lastActiveKey !== entry.key) {
+          lastActiveKey = entry.key
+          record(entry.key)
+        }
         return { entry }
       }
       return { error: `no pipeline state for workspace: ${wanted}` }

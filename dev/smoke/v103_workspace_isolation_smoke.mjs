@@ -236,12 +236,18 @@ try {
   const unknownDenial = unknownGuard({ name: 'pipeline_spawn_module_lead', agent: { id: 'u1' } })
   check('unknown tier denies spawn', typeof unknownDenial === 'string', String(unknownDenial))
 
-  section('client widget shares one workspace pick')
-  // v109: the expanded card and the collapsed rail are separate mounts; the pick
-  // must live in module state (and storage), not per-component useState, or the
-  // rail keeps showing the host-wide lastActive workspace.
+  section('client widget follows the current workspace')
+  // v110: the card must track the DSH workspace the user is looking at. Slot
+  // components receive the shell's `useSessions` hook, and the main view's session
+  // carries `retainedBy.mainView > 0` plus its cwd — so the widget sends that cwd
+  // and the host resolves it to a project root even before any pipeline tool ran
+  // there. v108/v109 persisted the pick in localStorage, which pinned the card to
+  // a stale project across switches; the legacy key must stay cleared and the
+  // picker must offer a "follow" entry.
   const clientSrc = readFileSync(join(repoRoot, 'plugin', 'client.js'), 'utf8')
-  check('client persists the workspace pick', clientSrc.includes("'dsh-pipeline.workspace'") && clientSrc.includes('localStorage'), '')
+  check('client reads the main-view session cwd', clientSrc.includes('retainedBy') && clientSrc.includes('mainView') && clientSrc.includes('cwd'), '')
+  check('client offers a follow-current-workspace entry', clientSrc.includes('跟随当前工作区'), '')
+  check('client clears the legacy persisted pick', clientSrc.includes('removeItem') && !clientSrc.includes('localStorage.setItem'), '')
   check('rail and card share the pick hook', clientSrc.includes('usePickedWorkspace') && !clientSrc.includes('setPicked'), '')
 
   section('cold start restores per workspace')
@@ -262,6 +268,16 @@ try {
   const loadA = resLoadA.statusCode === 200 ? JSON.parse(resLoadA.body) : null
   check('cold board can load A from disk by key', resLoadA.statusCode === 200 && loadA?.debug?.workspace === normalizeRoot(rootA), `status ${resLoadA.statusCode}`)
   check('loaded A restores its run', loadA?.run?.id === lock.run_id, JSON.stringify({ run: loadA?.run?.id }))
+
+  // v110 — the sidebar widget sends the current session's cwd, which is often a
+  // subdirectory of the project (e.g. the session was started in src/). The route
+  // must walk up to the project root instead of 404ing or creating a store there.
+  mkdirSync(join(rootA, 'src', 'nested'), { recursive: true })
+  const resSub = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
+  routes[routes.length - 1].handler({ url: `/pipeline/board?workspace=${encodeURIComponent(join(rootA, 'src', 'nested'))}` }, resSub)
+  const subSnap = resSub.statusCode === 200 ? JSON.parse(resSub.body) : null
+  check('a session cwd subdirectory resolves to its project root', resSub.statusCode === 200 && subSnap?.debug?.workspace === normalizeRoot(rootA), `status ${resSub.statusCode} · ${JSON.stringify(subSnap?.debug)}`)
+  check('the subdirectory probe did not create a nested store', !existsSync(join(rootA, 'src', 'nested', '.dsh')))
 
   const coldA = await statusOf(h2, 'a1')
   check('cold start restores A lock', coldA.run_id === lock.run_id && coldA.locked === true, JSON.stringify({ run: coldA.run_id, locked: coldA.locked }))

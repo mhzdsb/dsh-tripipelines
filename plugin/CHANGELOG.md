@@ -2,6 +2,17 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（`dsh-pipeline-vN`），版本号即迭代序号。
 
+## v110 — 1.19.0（看板跟随当前 DSH 工作区）
+
+### 修复
+- 切换工作区后侧栏看板不同步：v108/v109 的选择靠 `localStorage` 持久化或宿主 `lastActive` 回落，而 `lastActive` 只在目标工作区跑过 pipeline 工具时才更新——用户只是切过去、没有发消息时，卡片仍显示上一个项目。
+- 客户端改为从 slot 的标准 `useSessions` props 取主视图会话（`retainedBy.mainView > 0`）的 `cwd`，轮询 `/pipeline/board?workspace=<cwd>`；工作区切换即时生效，无需在目标项目产生任何活动。
+- host 的 `entryForRoute` 接受「存在的绝对路径 + 项目标记（`.git` 或 `.dsh/pipeline`）」：`findProjectRoot` 上溯到项目根后再 `ensure(key)`，即使该工作区从未跑过 pipeline 工具也能按需加载；子目录 cwd 不会在子目录里建 store。
+- 显式选择改为会话内内存状态（不再写 `localStorage`，旧键 `dsh-pipeline.workspace` 自动清除）；下拉框首项「跟随当前工作区」，选中后回到自动跟随。旧行为会把卡片钉死在旧项目，正是这次不同步的来源。
+
+### 测试
+- v103 由 44 → 48 断言：客户端断言改为「读取主视图会话 cwd / 提供跟随项 / 清除旧持久化键」；新增「会话 cwd 子目录解析到项目根且不建嵌套 `.dsh`」用例。
+
 ## v109 — 1.18.0（工作区选择在侧栏各形态间同步）
 
 ### 修复

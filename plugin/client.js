@@ -58,34 +58,27 @@ window.__ModuleLoader__.load({
       return v >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')}K` : String(v)
     }
 
-    // v109 — the expanded card and the collapsed rail are separate mounts of the
-    // same slot, so a workspace pick made in one used to be invisible to the other
-    // (the rail kept polling the host-wide lastActive workspace). Keep the choice
-    // in module state shared by every mount, and persist it so a remount or a page
-    // refresh lands on the same workspace instead of drifting back to "whichever
-    // project ran last". The value is the host's normalized workspace key.
+    // v110 — follow the DSH workspace the user is looking at. The sidebar card has
+    // no session prop, but every slot component receives the standard `useSessions`
+    // hook; the shell marks the main view's session with retainedBy.mainView > 0,
+    // so that session's cwd is the active workspace. v108/v109 persisted the pick in
+    // localStorage, which pinned the card to a stale project across workspace
+    // switches and refreshes; the explicit picker is now session-only, and clearing
+    // the legacy key raises everyone back to "follow the current workspace".
     const PICK_KEY = 'dsh-pipeline.workspace'
     let pickedKey = null
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        pickedKey = window.localStorage.getItem(PICK_KEY) || null
+        window.localStorage.removeItem(PICK_KEY)
       }
     } catch {
-      /* storage unavailable -> fall back to the host default */
+      /* storage unavailable -> nothing to clear */
     }
     const pickSinks = new Set()
     function pickWorkspace(key) {
       const next = key ? String(key) : null
       if (next === pickedKey) return
       pickedKey = next
-      try {
-        if (typeof window !== 'undefined' && window.localStorage) {
-          if (next) window.localStorage.setItem(PICK_KEY, next)
-          else window.localStorage.removeItem(PICK_KEY)
-        }
-      } catch {
-        /* a blocked storage must not break the widget */
-      }
       for (const sink of pickSinks) sink()
     }
     function usePickedWorkspace() {
@@ -95,6 +88,23 @@ window.__ModuleLoader__.load({
         return () => pickSinks.delete(force)
       }, [force])
       return pickedKey
+    }
+
+    // The session rendered in the main view. `retainedBy.mainView` is the marker the
+    // shell's own mainSessionId() uses (see client-ui-workspace), and `cwd` is the
+    // workspace path the board route normalizes back into a registry key.
+    function selectMainCwd(sessions) {
+      if (!sessions || !sessions.byId) return null
+      for (const item of Object.values(sessions.byId)) {
+        if (!item || !item.retainedBy || !(item.retainedBy.mainView > 0)) continue
+        if (typeof item.cwd === 'string' && item.cwd) return item.cwd
+      }
+      return null
+    }
+    function useCurrentCwd(props) {
+      const useSessions = props && typeof props.useSessions === 'function' ? props.useSessions : null
+      if (!useSessions) return null
+      return useSessions(selectMainCwd) || null
     }
 
     function useBoard(workspaceKey) {
@@ -140,17 +150,18 @@ window.__ModuleLoader__.load({
 
     // v108 — workspace switcher. It only appears when the daemon knows more than
     // one project; picking one re-points the poll at ?workspace=<key>, and the
-    // host loads that project's store from disk on demand.
-    function workspacePicker(snap, picked, onPick) {
+    // host loads that project's store from disk on demand. v110 — the first entry
+    // ("follow") returns to the live DSH workspace; a pick stays session-only so a
+    // workspace switch in the app always wins by default.
+    function workspacePicker(snap, picked, cwd, onPick) {
       const list = Array.isArray(snap && snap.workspaces) ? snap.workspaces : []
       if (list.length < 2) return null
-      const current = picked || (list.find((w) => w.active) || list[0]).key
       return h(
         'select',
         {
           'aria-label': '切换工作区',
           title: '切换看板显示的工作区',
-          value: current,
+          value: picked || '',
           onChange: (e) => onPick(e.target.value || null),
           style: {
             maxWidth: 132,
@@ -166,6 +177,7 @@ window.__ModuleLoader__.load({
             flex: 'none',
           },
         },
+        h('option', { key: '__follow__', value: '' }, cwd ? '跟随当前工作区' : '自动（最近工作区）'),
         list.map((w) => h('option', { key: w.key, value: w.key }, `${w.name}${w.active ? ' · 当前' : ''}`)),
       )
     }
@@ -176,7 +188,15 @@ window.__ModuleLoader__.load({
     function PipelineBoard(props) {
       const wide = !props || props.wide !== false
       const picked = usePickedWorkspace()
-      const snap = useBoard(picked)
+      // v110 — the shell hands every slot component the standard useSessions hook; the
+      // session it renders in the main view carries the active workspace path. Unless
+      // the user pinned a workspace in the picker, the card follows that path, so
+      // switching workspaces in the app re-points the poll without needing a message
+      // or any pipeline activity in the target project. The picker's "跟随当前工作区"
+      // entry clears the pick again.
+      const cwd = useCurrentCwd(props)
+      const followKey = picked || cwd || null
+      const snap = useBoard(followKey)
       // A workspace removed from disk disappears from the host list; drop the stale
       // pick so the next poll falls back to the host default instead of 404ing.
       React.useEffect(() => {
@@ -221,7 +241,7 @@ window.__ModuleLoader__.load({
             style: { ...CARD, opacity: 0.6 },
           },
           h('div', { style: { ...ROW, color: C.sub } }, '◫ 流水线待命'),
-          workspacePicker(snap, picked, pickWorkspace),
+          workspacePicker(snap, picked, cwd, pickWorkspace),
         )
       }
       const milestones = snap.milestones || []
@@ -234,7 +254,7 @@ window.__ModuleLoader__.load({
       const accent = paused || run.status === 'active' ? C.warn : run.status === 'done' ? C.ok : C.idle
       const detail = [
         `run: ${run.id || '(none)'} · ${STATUS_LABEL[run.status] || run.status}${paused ? `（${run.pauseReason || '已暂停'}）` : ''}`,
-        `工作区: ${wsName || picked || '(host default)'}`,,
+        `工作区: ${wsName || picked || cwd || '(host default)'}`,
         `甜点区: L1 ${fmtCount(snap.context?.level1?.tokens)}/${fmtCount(snap.context?.level1?.budget)} · L2 ${fmtCount(snap.context?.level2?.tokens)}/${fmtCount(snap.context?.level2?.budget)}`,
         ...milestones.map((m) => `· ${m.name}: ${m.state} (${m.done}/${m.total})`),
         ...agents.map((a) => `· L2 ${a.label}: ${a.state}${a.scopeDir ? ` @ ${a.scopeDir}` : ''}`),
@@ -494,7 +514,7 @@ window.__ModuleLoader__.load({
               `${fmtCount(budget.tokensUsed || 0)}/${fmtCount(budget.maxTokens || 0)}`,
             ),
           ),
-          workspacePicker(snap, picked, pickWorkspace),
+          workspacePicker(snap, picked, cwd, pickWorkspace),
         ),
         // Divider: the title block ends here; everything below is the level board.
         h('div', { style: { height: 1, background: 'rgba(255,255,255,.08)', margin: '7px 0 1px' } }),
