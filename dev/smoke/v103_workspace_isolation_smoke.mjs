@@ -236,6 +236,14 @@ try {
   const unknownDenial = unknownGuard({ name: 'pipeline_spawn_module_lead', agent: { id: 'u1' } })
   check('unknown tier denies spawn', typeof unknownDenial === 'string', String(unknownDenial))
 
+  section('client widget shares one workspace pick')
+  // v109: the expanded card and the collapsed rail are separate mounts; the pick
+  // must live in module state (and storage), not per-component useState, or the
+  // rail keeps showing the host-wide lastActive workspace.
+  const clientSrc = readFileSync(join(repoRoot, 'plugin', 'client.js'), 'utf8')
+  check('client persists the workspace pick', clientSrc.includes("'dsh-pipeline.workspace'") && clientSrc.includes('localStorage'), '')
+  check('rail and card share the pick hook', clientSrc.includes('usePickedWorkspace') && !clientSrc.includes('setPicked'), '')
+
   section('cold start restores per workspace')
   const h2 = makeCtx({ sessions, roots: [{ id: 'a1' }, { id: 'b1' }] })
   apply(h2.ctx, { mode: 'auto' })

@@ -58,6 +58,45 @@ window.__ModuleLoader__.load({
       return v >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')}K` : String(v)
     }
 
+    // v109 — the expanded card and the collapsed rail are separate mounts of the
+    // same slot, so a workspace pick made in one used to be invisible to the other
+    // (the rail kept polling the host-wide lastActive workspace). Keep the choice
+    // in module state shared by every mount, and persist it so a remount or a page
+    // refresh lands on the same workspace instead of drifting back to "whichever
+    // project ran last". The value is the host's normalized workspace key.
+    const PICK_KEY = 'dsh-pipeline.workspace'
+    let pickedKey = null
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        pickedKey = window.localStorage.getItem(PICK_KEY) || null
+      }
+    } catch {
+      /* storage unavailable -> fall back to the host default */
+    }
+    const pickSinks = new Set()
+    function pickWorkspace(key) {
+      const next = key ? String(key) : null
+      if (next === pickedKey) return
+      pickedKey = next
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          if (next) window.localStorage.setItem(PICK_KEY, next)
+          else window.localStorage.removeItem(PICK_KEY)
+        }
+      } catch {
+        /* a blocked storage must not break the widget */
+      }
+      for (const sink of pickSinks) sink()
+    }
+    function usePickedWorkspace() {
+      const [, force] = React.useReducer((n) => n + 1, 0)
+      React.useEffect(() => {
+        pickSinks.add(force)
+        return () => pickSinks.delete(force)
+      }, [force])
+      return pickedKey
+    }
+
     function useBoard(workspaceKey) {
       const [snap, setSnap] = React.useState(null)
       React.useEffect(() => {
@@ -136,11 +175,20 @@ window.__ModuleLoader__.load({
     // L2s below. Hovering shows the full detail (run id, milestones, L2s, recent events).
     function PipelineBoard(props) {
       const wide = !props || props.wide !== false
-      const [picked, setPicked] = React.useState(null)
+      const picked = usePickedWorkspace()
       const snap = useBoard(picked)
+      // A workspace removed from disk disappears from the host list; drop the stale
+      // pick so the next poll falls back to the host default instead of 404ing.
+      React.useEffect(() => {
+        if (!snap || !picked) return
+        const list = Array.isArray(snap.workspaces) ? snap.workspaces : []
+        if (list.length > 0 && !list.some((w) => w.key === picked)) pickWorkspace(null)
+      }, [snap, picked])
       if (!snap || !snap.run) return null
       const run = snap.run
       const idle = !run.status || run.status === 'idle'
+      const activeWs = (Array.isArray(snap.workspaces) ? snap.workspaces : []).find((w) => w.active)
+      const wsName = activeWs ? activeWs.name : ''
       if (!wide) {
         // Collapsed sidebar (56px rail): no card fits, so degrade to one icon-sized
         // marker whose tooltip carries the state.
@@ -148,7 +196,9 @@ window.__ModuleLoader__.load({
           'div',
           {
             'data-pipeline-board': '1',
-            title: idle ? '流水线待命' : `流水线 ${STATUS_LABEL[run.status] || run.status}`,
+            title: idle
+              ? `流水线待命${wsName ? ` · ${wsName}` : ''}`
+              : `流水线 ${STATUS_LABEL[run.status] || run.status}${wsName ? ` · ${wsName}` : ''}`,
             style: {
               display: 'flex',
               alignItems: 'center',
@@ -171,7 +221,7 @@ window.__ModuleLoader__.load({
             style: { ...CARD, opacity: 0.6 },
           },
           h('div', { style: { ...ROW, color: C.sub } }, '◫ 流水线待命'),
-          workspacePicker(snap, picked, setPicked),
+          workspacePicker(snap, picked, pickWorkspace),
         )
       }
       const milestones = snap.milestones || []
@@ -184,6 +234,7 @@ window.__ModuleLoader__.load({
       const accent = paused || run.status === 'active' ? C.warn : run.status === 'done' ? C.ok : C.idle
       const detail = [
         `run: ${run.id || '(none)'} · ${STATUS_LABEL[run.status] || run.status}${paused ? `（${run.pauseReason || '已暂停'}）` : ''}`,
+        `工作区: ${wsName || picked || '(host default)'}`,,
         `甜点区: L1 ${fmtCount(snap.context?.level1?.tokens)}/${fmtCount(snap.context?.level1?.budget)} · L2 ${fmtCount(snap.context?.level2?.tokens)}/${fmtCount(snap.context?.level2?.budget)}`,
         ...milestones.map((m) => `· ${m.name}: ${m.state} (${m.done}/${m.total})`),
         ...agents.map((a) => `· L2 ${a.label}: ${a.state}${a.scopeDir ? ` @ ${a.scopeDir}` : ''}`),
@@ -443,7 +494,7 @@ window.__ModuleLoader__.load({
               `${fmtCount(budget.tokensUsed || 0)}/${fmtCount(budget.maxTokens || 0)}`,
             ),
           ),
-          workspacePicker(snap, picked, setPicked),
+          workspacePicker(snap, picked, pickWorkspace),
         ),
         // Divider: the title block ends here; everything below is the level board.
         h('div', { style: { height: 1, background: 'rgba(255,255,255,.08)', margin: '7px 0 1px' } }),
