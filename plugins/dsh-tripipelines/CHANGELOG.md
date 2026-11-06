@@ -2,6 +2,108 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（v114 起为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`），版本号即迭代序号。
 
+## v123 — 1.27.0（L3 可以是云端模型，并可带模式；`/pipe-config` 直接自配对 provider）
+
+### 变更
+- **`/pipe-config` 支持一条命令同时带模式/provider**：`/pipe-config level3Model <id> mode=agent`、`/pipe-config level3Model <id> provider=<pid>`，也接受纯 `k=v` 形式；`level3Model` 后面直接跟 `agent|executor|auto` 视为 `mode=`。L2 永远是子代理，`mode=` 用在 L2 上会被忽略并给出说明。
+- **改模型后自动配套**：命令执行后插件用 `ctx.llm.listModels` 校验，L2/L3 的模型只属于另一个 provider 时自动改过去并在输出里说明（`🔧 … 已自动配套 level2Provider=…`）。因此 `qwen3.7-plus` 这类 token-plan 模型直接写模型名即可，不再需要手动补 provider 行。派发/模型清单里的显式 provider 仍优先。
+- **新增 `level3Mode`（auto / executor / agent，默认 auto）**：`executor` = 本地 OpenAI 兼容端点一次性执行；`agent` = 把 L3 当 DSH 子代理、跑在该模型所属 provider 上（云端模型没有本地端点，必须走这条）；`auto` 按模型来源判断（引擎模型 → executor，云端模型 → agent）。`pipeline_model_setup` 的默认值落 `auto`，`apply:'custom'` 传云端 L3 时自动切成 agent 并配套 provider。
+- **模式约束**：`level3Mode=agent` 时 `pipeline_execute_local` / `pipeline_execute_batch` 返回 blocked 并指向 `pipeline_spawn_local_executor`；`level3Mode=executor` 时反向拒绝 `pipeline_spawn_local_executor`。`pipeline_spawn_local_executor` 派发前同样校验 L3 的 provider 配对（自动纠正或明确报错），不再把云端模型 id 发到错误端点。
+- **开工清单**：L3 段标题区分两种模式，并多给一行示例 `/pipe-config level3Model <任一 L2 模型> mode=agent`；当前行与 `✅ 已定` 行都显示 L3 模式。
+- `pipeline_selftest`：agent 模式下检查 `level3Provider`/`level3Model` 配对（不再检查本地端点），executor/auto 模式仍检查 `GET /v1/models`；`level3Mode` 写进 protocol 的 config 行。
+- 项目记录 `model-setup.json` 增加 `level3Provider` / `level3Mode`；protocol 与 SKILL.md Phase 0/3（新「L3 MODE」段）字节同步。
+
+### 测试
+- 新增 `dev/smoke/v123_l3_mode_smoke.mjs`（23 断言）：`mode=agent` 落盘并自动配套 provider、清单提示、agent 模式 selftest 通过/坏配对 degraded、agent 模式拒绝 execute_local、executor 模式拒绝 spawn_local_executor、`mode=auto` 对引擎模型判 executor、裸 `agent` 简写、`apply:'custom'` 云端 L3 自动 agent、L2 上的 `mode=` 被忽略。
+- v121/v122 用例按新行为更新（L3 行数、裸模型命令现在自配对）；测试链 17 → 18 套件，`npm test` 全绿。
+
+### 文档
+- README / TUTORIAL / QUICKSTART：补云端 L3 + `mode=agent` 用法与「L2 直接写模型名」的说明。
+
+版本 1.26.0 → 1.27.0（行为变化：`/pipe-config` 改模型会自动配套 provider；L3 可用云端模型并以 agent 模式运行，模式可随命令一起设置）。
+
+## v122 — 1.26.0（跨 provider 选 L2 模型时自动带上正确的 provider）
+
+### 修复
+- **缺陷（用户实机报错）**：`level2Provider=deepseek-official` + `level2Model=qwen3.7-plus`（该 id 只属于 `qwen-token-plan-cn`）时，`pipeline_spawn_module_lead` 把这对值原样交给 DeepSeek，API 返回 `The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed qwen3.7-plus.`。现在 provider 与 model 在三处被绑定：
+  - `pipeline_model_setup` 清单按 provider 分组：非当前 provider 的组前直接给一行可复制的 `/pipe-config level2Provider <id>`；当前配置本身配对无效时额外打印 `🚨 当前 L2 配对无效…` 及修复命令。
+  - `pipeline_model_setup({apply:'custom', level2Model})` 未显式给 provider 时，按发现结果自动配套正确 provider 并写 warning；显式给了 provider 的仍尊重，只警告。
+  - `pipeline_spawn_module_lead` 派发前做 best-effort 校验（`ctx.llm.listModels`，2s 超时、60s 缓存）：模型不在指定 provider 下时自动改到提供它的 provider，结果返回 `providerNote`；显式传 `provider` 的调用不改写、只警告；llm 不可用或模型未知时不阻断派发。
+- `pipeline_selftest` 新增 `L2 model/provider` 检查：模型不在 provider 列表时标为 degraded，并给出「它在哪个 provider 下、该发哪条命令」。
+
+### 测试
+- 新增 `dev/smoke/v122_l2_provider_smoke.mjs`（23 断言）：清单按 provider 分组 + 可复制 provider 行 + 顺序、当前坏配对告警、`apply:'custom'` 自动配套并落盘、spawn 自动改 provider 且模型不变、显式 provider 被尊重且给警告、未知模型警告不阻断、selftest 报 degraded。
+- 测试链 16 → 17 套件，`npm test` 全绿。
+
+### 文档
+- README / QUICKSTART：补「模型属于哪个 provider」的说明与排查方式。
+
+版本 1.25.0 → 1.26.0（行为变化：跨 provider 选 L2 模型不再需要手动补 provider 命令；派发前会自动纠正并在 `providerNote` 说明）。
+
+## v121 — 1.25.0（每个项目开工先定二级/三级模型）
+
+### 变更
+- 新增 L1 工具 `pipeline_model_setup`：在每个项目开工、锁定需求之前调用一次。它动态发现二级候选（`ctx.llm.listProviders()` + `listModels()`，跨 provider 合并并标注 provider）和三级候选（`GET <level3Endpoint>/models`，保持引擎返回顺序 = 本机排序；引擎离线时回退配置值 + `MODEL_PROFILES` 档案，并明确标注「引擎未在线」）。
+- 返回 `message`：可直接贴进对话的中文清单，每个模型一行可复制的 `/pipe-config level2Model <id>` / `/pipe-config level3Model <id>`，默认项标 `← 默认`；同一模型 id 出现在多个 provider 时提示再补一条 `/pipe-config level2Provider <provider>`。另返回 `question`，供 `ask_user_question` 三选一：用默认 / 我自己指定 / 本项目不用三级协作。
+- 默认值：L2 = `deepseek-flash`（沿用配置的 provider）；L3 = 本机 `/models` 返回的第 1 个（引擎离线时取 `level3Model` 配置值）。`apply:'defaults'` 一键落默认，`apply:'custom'` 落用户指定值（未出现在发现列表里的 id 仍接受，但给 warning）。
+- 选择结果按项目记忆到 `<stateDir>/model-setup.json`（`confirmed/mode/level2Model/level2Provider/level3Model/at`）；再次打开同一项目时返回 `alreadyConfigured:true`，只贴一行摘要，不重复追问。
+- `pipeline_lock_requirements` 在项目尚未定模型时返回 `modelSetupHint`，提示先贴清单并问一次；定过之后 hint 为 `null`。
+- 持久化仍复用 `/pipe-config` 的全局 `~/.dsh/pipeline/config.json`，项目级覆盖仍写 `<devDir>/pipeline-project.json`；换 L2 时甜点区照旧自动联动。
+- protocol 提示词与 SKILL.md Phase 0 改为「开工第一件事」的四步流程（调用 → 原样贴 `message` → 问 `question` → 默认/自定义/关闭），两者字节同步。
+
+### 测试
+- 新增 `dev/smoke/v121_model_setup_smoke.mjs`（43 断言）：发现顺序/去重、跨 provider 合并、默认 L2 flash / 默认 L3 本机第 1、离线回退不谎称排序、可复制行与 `← 默认`/provider 提示/关闭出口、question 三选项、工具注册与 L1-only/footer、`apply:'defaults'` 落盘全局配置 + 项目记录、lock hint 前后、alreadyConfigured、custom 落盘、空 custom 沿用当前配置、未知 id 警告。
+- 测试链 15 → 16 套件，`npm test` 全绿。
+
+### 文档
+- README：能力表/工具表/配置说明/使用一节补「开工先定模型」；测试清单 16 套件。
+- TUTORIAL：四阶段第 1 步改为贴全量模型清单 + 默认值；工具表补 `pipeline_model_setup`。
+- QUICKSTART：第 0 步补默认值说明。
+
+版本 1.24.0 → 1.25.0（行为变化：每个新项目会在锁定需求前先贴出模型清单并问一次；不选则按默认落盘）。
+
+## v120 — 1.24.0（`/pipe-research` 真正开始研讨，而不只是落一份空骨架）
+
+### 变更
+- `/pipe-research <议题>` 在写完 `knowledge/research/<日期>-<slug>.md` 后，调用 `invocation.agent.followup(...)` 唤醒当前 agent，注入一条 user-role 提示：先就第 1 步（立项）用 `ask_user_question` 问 1-2 个问题（问题本身、成功判据、预算），不要一次把 7 步问题倒完；用户回答后再逐节续写文件。此前命令只生成骨架并返回路径，研讨实际从未开始（用户反馈）。
+- 注入消息是普通的 user/source `{kind:'user'}` 文本消息，带新 UUID；宿主不支持 `followup` 时命令仍成功，但文本明确说「没有可唤醒的 agent，请在对话里说开始研讨」，不谎称已发问。
+- 消息里的笔记路径用工作区相对路径（`knowledge/research/...`），非绝对路径。
+- 命令描述改为「open ... and start the 7-step interview」。
+
+### 测试
+- 新增 `dev/smoke/v120_research_handoff_smoke.mjs`（20 断言）：命令注册与描述、`followup` 恰好一次、user role/source/UUID/单 text block、内容含议题+相对路径+第 1 步+1-2 问、骨架仍含 7 节、成功文案声称已发问、无 `followup` 宿主降级且不谎称、空议题回退 `untitled topic`。
+- 测试链 14 → 15 套件，`npm test` 全绿。
+
+### 文档
+- README「专题研讨」：说明 v120 起同一轮开始第 1 步提问，v119 及以前只落空骨架。
+- SKILL.md / `prompts.js` SKILL_BODY：`/pipe-research` 一行改为「note + first-step interview starts in the same turn（v120）」，字节同步。
+- README 测试清单更新为 15 套件。
+
+版本 1.23.0 → 1.24.0（行为变化：`/pipe-research` 会立即触发一轮 agent 回复）。
+
+## v119 — 1.23.0（质量门可退出：cmd 验收 + 计划期校验 + 状态卫生）
+
+### 修复
+- **缺陷 1（阻断）**：`pipeline_register_output` 现在记录 `l3SubtaskId = s.id`，L2 直写后 `pipeline_review` 的 `subtask-id-match` 恒假的死循环解除（此前 review 载荷为 `null`，与 `"t1-s1"` 比较必然失败）。
+- **缺陷 2（死路）**：新增 `acceptanceMode` / `validateAcceptanceCriteria`，`pipeline_plan` 落盘前校验每条验收：断言 / `cmd:` / 关键词分三种模式。关键词分封顶 0.5 而阈值 > 0.5 时直接报错，并给出三种改法（写 `add(2,3)==5`、写 `cmd: ...`、或显式把 `semanticGateThreshold` 降到 ≤0.5）。L2 分解时若 LLM 生成的子任务验收不可用，回退模块验收，避免把子任务预埋成失败。
+- **缺陷 3（文件类任务）**：新增 `cmd:` / `run:` / `command:` 验收模式（`executeCommandAcceptance`），在工作区根目录执行命令并以退出码判定；默认 120s 超时（新配置 `commandAcceptanceTimeoutMs`）。这是「集成验收」，与断言沙箱分离：断言沙箱仍禁止 `pathlib`/`os`/`open` 等 import/IO，文件任务应在工作区跑 `pytest`/同步检查脚本。多子任务模块的子任务级命令验收自动 defer 到模块门禁（`deferred`），由 task gate 真正判死。
+- **缺陷 4（里程碑出口）**：`pipeline_accept_milestone` 失败时列出阻塞项（任务状态/原因 + 卡住的子任务 `id:state(reason)`），并提示先 `pipeline_review` 或修正 `acceptance`；不再是只有 `0/1` 的无信息报错。
+- **缺陷 5（兜底切分）**：`splitIntoChunks` 只在句末标点（`。；！？`）或「点号 + 空白」处切分，不再把 `sync_pipeline_knowledge.py` 拆成 `. py`、`decisions.md` 拆成 `. md`。
+- **缺陷 6（状态卫生）**：新 `pipeline_lock_requirements` 会把上一轮遗留的 `in_progress` / `replaced` L2 标为 `archived`（保留 `done`），`waitingFor` 不再永久挂着旧 agent。
+- **缺陷 7（误导信息）**：`pipeline_status` 新增 `countersNote`，说明 `llmCalls`/`tokensIn`/`tokensOut` 只统计插件侧 L3/LLM，L2 会话真实用量只计入 `measuredTokens`（与 `tokensUsed` 同源）；L1 上下文超预算告警明确标注「仅告警，不阻断」并返回 `warningOnly:true` / `blocks:false`；`pipeline_scan` 与 check-stale 默认跳过 `_scratch`。
+- **健壮性**：`cmd:` 命令执行在禁止管道 stdio 的宿主（如 DSH Windows 沙箱）上自动以 `stdio:'ignore'` 重试，仍以退出码判定，不会因 EPERM 误判失败。
+
+### 测试
+- 新增 `dev/smoke/v119_gate_exit_smoke.mjs`（41 断言）：register→review id 匹配、plan 拒绝不可通过验收、`cmd:` 文件任务通过/非零退出/执行开关、断言沙箱仍拒绝 pathlib、多子任务 defer、里程碑阻塞项、兜底切分文件名完整、lock 归档、countersNote、warningOnly、`_scratch` 跳过、`commandAcceptanceTimeoutMs` 默认与校验。
+- 测试链 13 → 14 套件，`npm test` 全绿。
+
+### 文档
+- README：能力表、配置表、工具表、已知限制补 `cmd:` 验收与计划期校验；测试清单更新为 14 套件。
+- TUTORIAL：示例 TaskPlan 改为断言形态，补充三种验收写法与排障说明。
+- SKILL.md / `prompts.js` SKILL_BODY：需求访谈阶段写明断言或 `cmd:` 验收（字节同步保持）。
+
+版本 1.22.0 → 1.23.0（行为变化：不可执行的验收在 plan 期报错；新 run 会归档旧 L2）。
+
 ## v118 — 1.22.0（隔离契约 + 检索语义）
 
 ### 变更

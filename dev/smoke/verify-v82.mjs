@@ -29,7 +29,7 @@ function check(label, cond, extra) {
 
 // v90 split: plugin.js now depends on sibling modules — copy them all next to the
 // patched copies (config gets a temp CONFIG_FILE, store a temp state dir).
-for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js']) {
+for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js']) {
   copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 }
 mkdirSync(join(tmp, 'tools'), { recursive: true })
@@ -239,11 +239,11 @@ function fakeCtx() {
 }
 
 // deterministic global layer for this section, then apply per project
-function appliedConfig(devDir) {
+async function appliedConfig(devDir) {
   writeFileSync(tmpConfig, JSON.stringify({ level2ContextBudget: 55555, level1ContextBudget: 4096 }), 'utf8')
   const ctx = fakeCtx()
   pluginMod.apply(ctx, { devDir, stateDir: join(tmp, 'state-' + Math.random().toString(36).slice(2)) })
-  const text = ctx.handlers.get('pipe-config')({ rawInput: '' }).text
+  const text = (await ctx.handlers.get('pipe-config')({ rawInput: '' })).text
   const read = (key) => {
     const m = text.match(new RegExp(`^\\s+${key} = ([^\\s]+)`, 'm'))
     return m ? m[1] : null
@@ -251,26 +251,26 @@ function appliedConfig(devDir) {
   return { text, level2ContextBudget: read('level2ContextBudget'), level2Model: read('level2Model'), level1ContextBudget: read('level1ContextBudget') }
 }
 
-const a = appliedConfig(projA)
+const a = await appliedConfig(projA)
 check('project A overrides global budget', a.level2ContextBudget === '99999', JSON.stringify(a.level2ContextBudget))
 check('project A overrides global model', a.level2Model === 'deepseek-chat', JSON.stringify(a.level2Model))
 check('project A inherits global level1ContextBudget', a.level1ContextBudget === '4096', JSON.stringify(a.level1ContextBudget))
-const b = appliedConfig(projB)
+const b = await appliedConfig(projB)
 check('project B sees only its own override', b.level2ContextBudget === '11111', JSON.stringify(b.level2ContextBudget))
 check('project B not contaminated by A model', b.level2Model === 'deepseek-flash', JSON.stringify(b.level2Model))
-const noProj = appliedConfig(join(tmp, 'projC'))
+const noProj = await appliedConfig(join(tmp, 'projC'))
 check('no project file -> global layer wins', noProj.level2ContextBudget === '55555', JSON.stringify(noProj.level2ContextBudget))
 
 // broken project file must not break apply()
 mkdirSync(join(tmp, 'projD'), { recursive: true })
 writeFileSync(join(tmp, 'projD', 'pipeline-project.json'), '{ broken', 'utf8')
-const d = appliedConfig(join(tmp, 'projD'))
+const d = await appliedConfig(join(tmp, 'projD'))
 check('broken project file falls back to global', d.level2ContextBudget === '55555', JSON.stringify(d.level2ContextBudget))
 
 // reset mentions project layer when a project file exists
 const ctxR = fakeCtx()
 pluginMod.apply(ctxR, { devDir: projA, stateDir: join(tmp, 'state-reset') })
-const resetRes = ctxR.handlers.get('pipe-config')({ rawInput: 'reset' })
+const resetRes = await ctxR.handlers.get('pipe-config')({ rawInput: 'reset' })
 check('reset warns about project layer', /pipeline-project\.json 仍会覆盖/.test(resetRes.text))
 writeFileSync(tmpConfig, JSON.stringify({ level2ContextBudget: 55555, level1ContextBudget: 4096 }), 'utf8')
 

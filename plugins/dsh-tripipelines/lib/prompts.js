@@ -11,11 +11,12 @@ export function buildProtocolText(cfg) {
   // only the decisions a model cannot recover from the tool schemas or the skill:
   // layering + boundary, dispatch/wait discipline, milestone gate, budget, config.
   return [
-    'Three-tier pipeline (tools-enforced): L1 = you (the chat model) plan + spawn L2 + accept; L2 (configured model) codes + dispatches L3; L3 (local engine) writes single-file code.',
-    'Read skill pipeline-orchestration before building. Never call L2/L3 tools yourself (decompose/execute_*/spawn_local_executor; review/register_output only when allowLevel1Takeover); reach L2 via pipeline_spawn_module_lead / pipeline_send_to_lead.',
-    'Dispatch = end the turn and wait for push reports: never poll, always reply to a report. A done-but-unaccepted milestone blocks spawn/send: run the acceptance dialog, then pipeline_accept_milestone. ⏸️ = budget paused — tell the user, never force past it.',
-    `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; gate ${cfg.semanticGateThreshold}; takeover ${cfg.allowLevel1Takeover === true ? 'on' : 'off'}.`,
-    'Lock requirements first (ask the user only for missing credentials). On an existing repo: pipeline_scan + pipeline_ledger once, then answer from pipeline_recall instead of re-reading files.',
+    'Three-tier pipeline (tools-enforced): L1 = you (chat model) plan + spawn L2 + accept; L2 (configured model) codes + dispatches L3; L3 (configured model) writes single-file code, locally over HTTP or as a cloud agent.',
+    'Read skill pipeline-orchestration first. Never call L2/L3 tools yourself (decompose/execute_*/spawn_local_executor; review/register_output only when allowLevel1Takeover); reach L2 via pipeline_spawn_module_lead / pipeline_send_to_lead.',
+    'Dispatch = end turn and wait for push reports; never poll, reply to reports. Done-but-unaccepted milestone blocks spawn/send: run acceptance dialog, then pipeline_accept_milestone. ⏸️ budget paused — tell the user.',
+    `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; gate ${cfg.semanticGateThreshold}; takeover ${cfg.allowLevel1Takeover === true ? 'on' : 'off'}; L3 mode ${cfg.level3Mode ?? 'auto'} (${cfg.level3Model}).`,
+    'Model onboarding (every project, first step): call pipeline_model_setup, paste its `message`, ask its `question`; defaults if skipped. Bare /pipe-config level2Model|level3Model <id> self-pairs provider; add mode=agent for a cloud L3.',
+    'Lock requirements first (ask only for missing credentials). Existing repo: pipeline_scan + pipeline_ledger once, then answer from pipeline_recall.',
   ].join('\n')
 }
 
@@ -85,15 +86,36 @@ export function buildL3ExecutorPrompt(subtask, acceptance, cfg) {
 export const SKILL_BODY = `# Three-Tier Agent Orchestration
 
 You are the Level-1 coordinator: the ONLY agent that talks to the user. Level-2 module leads
-(long-lived subagents, each on its configured model) code + dispatch; Level-3 executors (local
-engine, one-shot) write complete single-file code.
+(long-lived subagents, each on its configured model) code + dispatch; Level-3 executors write
+complete single-file code — either the local engine over HTTP (\`executor\`) or a cloud provider
+as a DSH subagent (\`agent\`).
 
 ## Phase 0 — Onboarding (new project, and taking over an existing repo)
-Post a short copyable message when a project starts:
-- Current: L1 = the model you picked for this chat / L2 = the model configured for the module (default level2Model) / L3 = local engine model.
-- Change a model: /pipe-config level2Model <id> or /pipe-config level3Model <id> (甜点区 follows
-  automatically, autoTuneSweetSpot on; project override: <devDir>/pipeline-project.json).
-- Add: "若本项目不需要三级协作，回复『不用三级模式』（我按单 agent 工作），或 /pipe-config mode off。"
+FIRST thing in every project, before the requirement interview or any lock:
+1. Call \`pipeline_model_setup\` once. It discovers the L2 models from the llm service and the L3
+   models from the local engine's \`/models\` (engine order = local ranking), then renders the block.
+2. Paste its \`message\` field into the chat VERBATIM. It lists the defaults (L2 = flash model,
+   L3 = the local engine's #1 model) and one copyable line per available model:
+   \`/pipe-config level2Model <id>\` and \`/pipe-config level3Model <id>\`. A bare model line
+   self-pairs its provider now (v123): for a cloud L3 the block also shows
+   \`/pipe-config level3Model <id> mode=agent\` — \`agent\` runs it as a DSH subagent on that
+   provider, \`executor\` keeps the HTTP endpoint path, \`auto\` decides from where the model lives.
+   L2 models are grouped by provider; every group whose provider differs from the current one
+   starts with a copyable \`/pipe-config level2Provider <id>\` (v122 spawn also auto-corrects).
+   Tell the user: copy a line and send it, or change nothing to keep the defaults. If the message
+   shows \`🚨 当前 L2 配对无效\`, relay that fix command first.
+3. Ask its \`question\` via ask_user_question (用默认 / 我自己指定 / 本项目不用三级).
+   - 用默认 → \`pipeline_model_setup({apply:'defaults'})\` and continue.
+   - 我自己指定 → the user's \`/pipe-config ...\` line (or a direct reply). After it runs, call
+     \`pipeline_model_setup({apply:'custom'})\` with no args so this project records the current
+     values; passing \`level2Model\` / \`level2Provider\` / \`level3Model\` / \`level3Mode\` also works.
+   - 本项目不用三级 → \`/pipe-config mode off\` (or activation=normal) and stay single-agent.
+4. Do not skip a new project: \`pipeline_lock_requirements\` returns \`modelSetupHint\` until the
+   workspace has a model-setup record. Re-running in the same workspace: the tool reports
+   \`alreadyConfigured: true\` — post the one-line current L1/L2/L3 summary, do not ask again.
+   The choice persists like \`/pipe-config\` (global \`~/.dsh/pipeline/config.json\`); per-project
+   override still possible in \`<devDir>/pipeline-project.json\`. 甜点区 follows automatically
+   (autoTuneSweetSpot on).
 
 Taking over an EXISTING repo — read knowledge, not the whole tree (v98/v99):
 - pipeline_scan once → \`.dsh/pipeline/knowledge/index.md\` + one page per code module (mechanical, 0 model tokens).
@@ -103,8 +125,10 @@ Taking over an EXISTING repo — read knowledge, not the whole tree (v98/v99):
 - Secret files (.env, *.key, *.pem) are never read by the scanner — do not read them yourself either.
 - Knowledge grows with the run: scan keeps index + module pages fresh, ledger keeps the decision ledger.
 - At a bottleneck (architecture thrash, a two-way choice, repeated rework): /pipe-research "<topic>" →
-  7-step note (evidence → candidates → counter-case → experiment → verdict). Fill it, write the verdict
-  into decisions.md / checkpoint, and pipeline_recall finds it later (research notes are indexed since v117).
+  7-step note (evidence → candidates → counter-case → experiment → verdict) AND the first-step interview
+  starts in the same turn (v120: it wakes the agent with a 1-2 question ask_user_question prompt). Fill it,
+  write the verdict into decisions.md / checkpoint, and pipeline_recall finds it later (research notes are
+  indexed since v117).
 - Isolation (v118): the plugin writes only \`<workspace>/.dsh/pipeline/\` plus devDir process docs; scan/ledger
   root, checkpoint path, resumeFrom, scopeDir and devDir cannot leave the workspace (absolute / ".." → error);
   it never creates or edits the project's \`decisions.md\` — that file is read-only input when it exists.
@@ -119,7 +143,7 @@ long question list into the chat. Ask 1-2 questions per round; prefer options fo
 - 5 Whys / goal: what problem, for whom, in what scenario.
 - MoSCoW scope: must / should / could / won't (options + multi_select).
 - Modularity + dependencies: can it split into independent modules? (options)
-- Acceptance (INVEST + Given-When-Then): per feature, a mechanically checkable criterion.
+- Acceptance (INVEST + Given-When-Then): per feature, a mechanically checkable criterion — an assertion (\`add(2,3)==5\`) or \`cmd: <command>\` run in the workspace (v119); prose only passes below semanticGateThreshold <= 0.5.
 - Constraints: language, runtime, environment (options where finite).
 Put the recommended option first, suffixed "(Recommended)". Stop when every module has an id, a
 description and a checkable acceptance criterion.
@@ -155,6 +179,10 @@ If SKIP: recommend single-agent mode + /pipe-config mode off.
   plugin writes the file and returns path/lines/sha8 — never re-type the generated code into the
   repo. L3 may retry up to maxLevel3Retries, then L2 takes over (prefer letting L3 retry);
   pipeline_review then gates the file on disk.
+- L3 MODE (v123): \`level3Mode=auto\` uses the HTTP executor; \`agent\` makes L3 a DSH subagent and
+  needs a provider-served model (\`/pipe-config level3Model <id> mode=agent\`, provider auto-pairs);
+  \`executor\` rejects pipeline_spawn_local_executor, \`agent\` rejects execute_local/batch. A cloud
+  L3 model must run in agent mode — it has no local endpoint.
 - Several L3 subtasks → ONE pipeline_execute_batch (serial, one reasoning step), not N
   pipeline_execute_local calls; each item may carry its own filePath.
 - Acceptance is written per task by the DISPATCHING agent: L1 writes each module's own; L2 writes
@@ -252,8 +280,9 @@ Only you talk to the user.
   /pipe-resume (continue) / /pipe-stop (freeze, files kept) / /pipe-off (single-agent). Every tool
   result shows the pause reason.
 - HEALTH (v89): /pipe-selftest checks the subagents API (startActivation / drainChildren), the llm
-  service and the L3 engine (GET /v1/models); startup pings the engine once (non-blocking, logged
-  only).
+  service, the L2 model/provider pairing, and the L3 path for the current mode — agent mode checks
+  the cloud provider pairing, otherwise the engine (GET /v1/models); startup pings the engine once
+  (non-blocking, logged only).
 
 `
 

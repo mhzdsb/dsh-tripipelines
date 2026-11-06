@@ -4,7 +4,7 @@ import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v118'
+const BUILD_TAG = 'v123'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -345,3 +345,4 @@ export function installBoardRoute(ctx, source, cfg) {
     }
   }
 }
+

@@ -32,7 +32,7 @@ function check(label, cond, extra) {
 
 // v90 split: the store/gates modules own the tested helpers now. Copy them next to
 // patched copies (config gets a temp CONFIG_FILE, store a temp runtime state dir).
-for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js']) {
+for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'models.js']) {
   copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 }
 mkdirSync(join(tmp, 'tools'), { recursive: true })

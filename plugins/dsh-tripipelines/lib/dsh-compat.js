@@ -190,7 +190,7 @@ export function measureLevel1Context(ctx, source, cfg) {
     const ratio = budget > 0 ? totalTokens / budget : 0
     const warnRatio = Number(cfg.level1ContextWarnRatio) > 0 ? Number(cfg.level1ContextWarnRatio) : 0.8
     const warning = ratio >= warnRatio
-      ? `L1 上下文已到 ${Math.round(ratio * 100)}%（${totalTokens}/${budget}，阈值 ${Math.round(warnRatio * 100)}%），建议 checkpoint 交接`
+      ? `L1 上下文已到 ${Math.round(ratio * 100)}%（${totalTokens}/${budget}，阈值 ${Math.round(warnRatio * 100)}%），建议 checkpoint 交接（仅告警，不阻断）`
       : null
     return {
       totalTokens,
@@ -198,6 +198,9 @@ export function measureLevel1Context(ctx, source, cfg) {
       ratio: Number(ratio.toFixed(3)),
       warnRatio,
       warning,
+      // v119 — the 1093% reading was mistaken for an enforced limit. Say so.
+      warningOnly: true,
+      blocks: false,
       source: source2,
       approximate: source2 !== 'tokenMeter.measure',
     }

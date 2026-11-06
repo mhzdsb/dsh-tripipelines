@@ -40,10 +40,17 @@ export const DEFAULT_CONFIG = {
   // inheriting the author's machine.
   level3Endpoint: '',
   level3Provider: 'ninfer-local',
+  // v123 — L3 is not necessarily the local one-shot engine. `auto` keeps both
+  // paths available (legacy behaviour); `executor` forces the OpenAI-compatible
+  // HTTP path; `agent` forces the DSH subagent path on a cloud provider.
+  level3Mode: 'auto',
   spawnProvider: 'spawn',
   level3InputBudget: 1200,
   level3MaxOutputTokens: 4096,
   level3TimeoutMs: 900000,
+  // v119 — `cmd:` acceptance runs in the workspace; bound it so a hung test
+  // command fails the gate instead of hanging the review tool.
+  commandAcceptanceTimeoutMs: 120000,
   semanticGateThreshold: 0.7,
   mode: 'auto',
   maxCodeLines: 100,
@@ -95,12 +102,18 @@ export const CONFIG_KEYS = {
   level2Model: { type: 'string', desc: '二级模块负责人模型（做任务分解）' },
   level3Model: { type: 'string', desc: '三级本地模型（ninfer / OpenAI 协议）' },
   level3Endpoint: { type: 'string', desc: '本机 OpenAI 兼容接口基址（默认空，必须显式配置，例如 http://127.0.0.1:8080/v1；工具自动追加 /chat/completions）' },
-  level3Provider: { type: 'string', desc: 'Level-3 子代理使用的 LLM provider 名（默认 ninfer-local；spawn_local_executor 用）' },
+  level3Provider: { type: 'string', desc: 'Level-3 子代理使用的 LLM provider 名（默认 ninfer-local；agent 模式下用）' },
+  level3Mode: {
+    type: 'enum',
+    values: ['auto', 'executor', 'agent'],
+    desc: '三级执行模式：auto=两条路都可用；executor=只走 OpenAI 兼容 HTTP（本地/自建端点）；agent=只走 DSH 子代理（云端 provider，如 token plan）',
+  },
   spawnProvider: { type: 'string', desc: '子代理 provider 名（默认 spawn；startActivation 用，通常不用改）' },
   level3InputBudget: { type: 'number', desc: '三级子任务输入 token 上限（默认 1200；超限先压缩，仍超则提示拆分）' },
   level3MaxOutputTokens: { type: 'number', desc: '三级输出 token 上限（默认 4096）' },
   level3TimeoutMs: { type: 'number', desc: '三级子任务超时毫秒（默认 900000=15 分钟；超时终止并重派）' },
-  semanticGateThreshold: { type: 'number', desc: '质量门控语义评分阈值（0~1）' },
+  commandAcceptanceTimeoutMs: { type: 'number', desc: 'cmd: 命令验收的超时毫秒（默认 120000=2 分钟；超时判失败）' },
+  semanticGateThreshold: { type: 'number', desc: '质量门控语义评分阈值（0~1；>0.5 时验收必须含断言或 cmd: 命令，否则计划阶段直接报错）' },
   mode: { type: 'enum', values: ['auto', 'on', 'off'], desc: '三级模式开关（auto=按项目评估，on=强制，off=关闭走单 agent）' },
   maxCodeLines: { type: 'number', desc: '三级子任务代码行数上限' },
   maxLevel3Retries: { type: 'number', desc: '三级子任务最大重试次数（超过即升级，不再重试）' },
@@ -290,7 +303,7 @@ export function coerceConfigValue(key, raw) {
 // v104 — a value can be the right type and still be nonsense (0 lines, negative
 // budget, ratio 2.0). Validate before it reaches a run.
 const RATIO_KEYS = new Set(['level1SweetSpotRatio', 'level2SweetSpotRatio', 'level1DangerRatio', 'level2DangerRatio', 'level1ContextWarnRatio'])
-const TIMEOUT_KEYS = new Set(['level3TimeoutMs', 'maxDurationPerRun'])
+const TIMEOUT_KEYS = new Set(['level3TimeoutMs', 'maxDurationPerRun', 'commandAcceptanceTimeoutMs'])
 const POSITIVE_KEYS = new Set([
   'maxCodeLines', 'maxLevel3Retries', 'maxLevel3Concurrency', 'maxLevel2Retries',
   'maxLevel2Agents', 'level3MaxOutputTokens', 'level1ContextBudget', 'level2ContextBudget',
@@ -336,7 +349,7 @@ export function renderConfig(cfg) {
   for (const [key, spec] of Object.entries(CONFIG_KEYS)) {
     lines.push(`  ${key} = ${cfg[key]}  (${spec.desc})`)
   }
-  lines.push('', '用法：/pipe-config              查看配置', '/pipe-config <key>          查看单项', '/pipe-config <key> <值>     修改单项', '/pipe-config reset          恢复默认')
+  lines.push('', '用法：/pipe-config              查看配置', '/pipe-config <key>          查看单项', '/pipe-config <key> <值>     修改单项', '/pipe-config <key> <值> mode=agent provider=<pid>', '                            连带设 L3 模式 / provider（L2 直接写模型名即可，provider 自动配对）', '/pipe-config reset          恢复默认')
   return lines.join('\n')
 }
 
@@ -344,7 +357,7 @@ export function handleConfigCommand(cfg, rawInput) {
   const parts = String(rawInput || '').trim().split(/\s+/).filter(Boolean)
   try {
     if (parts.length === 0) return { kind: 'success', text: renderConfig(cfg) }
-    const [a, b] = parts
+    const [a] = parts
     if (a === 'list' || a === 'keys') {
       return { kind: 'success', text: `可配置项：${Object.keys(CONFIG_KEYS).join(', ')}` }
     }
@@ -357,62 +370,120 @@ export function handleConfigCommand(cfg, rawInput) {
       if (projectKeys.length > 0) {
         text += '\n注意：本项目的 pipeline-project.json 仍会覆盖上述全局值（项目级配置优先级最高）。'
       }
-      return { kind: 'success', text }
+      return { kind: 'success', text, changed: [] }
     }
-    if (!(a in CONFIG_KEYS)) {
+    if (!a.includes('=') && !(a in CONFIG_KEYS)) {
       return { kind: 'error', text: `未知配置项 "${a}"。可用：${Object.keys(CONFIG_KEYS).join(', ')}` }
     }
-    if (parts.length === 1) {
+    if (parts.length === 1 && !a.includes('=')) {
       return { kind: 'success', text: `${a} = ${cfg[a]}  (${CONFIG_KEYS[a].desc})` }
     }
-    const value = coerceConfigValue(a, b)
-    validateConfigValue(a, value)
-    const prev = cfg[a]
-    cfg[a] = value
-    // v104 — only the keys this command actually changed reach config.json.
-    const patch = { [a]: value }
-    let text = `已更新 ${a}: ${prev} → ${value}`
-    if (a === 'level1Model' || a === 'level2Model' || a === 'level3Model') {
-      if (cfg.autoTuneSweetSpot === true) {
-        const tuned = tuneSweetSpot(cfg, a, MODEL_PROFILES)
+
+    // v123 — one command can carry follow-up pairs:
+    //   /pipe-config level3Model qwen3.7-plus mode=agent provider=qwen-token-plan-cn
+    //   /pipe-config level2Model qwen3.7-plus provider=qwen-token-plan-cn
+    // Bare key=value tokens may also form the whole command.
+    const pairs = []
+    if (a.includes('=')) {
+      for (const tok of parts) {
+        const i = tok.indexOf('=')
+        if (i <= 0) throw new Error(`无法解析 "${tok}"；附加项请写成 key=value（例如 mode=agent）`)
+        pairs.push([tok.slice(0, i), tok.slice(i + 1)])
+      }
+    } else {
+      if (parts[1].includes('=')) throw new Error(`"${a}" 缺少值；可写成 ${a} <值> 或 ${a}=<值>`)
+      pairs.push([a, parts[1]])
+      for (const tok of parts.slice(2)) {
+        if (tok.includes('=')) {
+          const i = tok.indexOf('=')
+          pairs.push([tok.slice(0, i), tok.slice(i + 1)])
+        } else if (['auto', 'executor', 'agent'].includes(tok) && (a === 'level3Model' || a === 'level3Mode')) {
+          // shorthand: /pipe-config level3Model <id> agent
+          pairs.push(['level3Mode', tok])
+        } else {
+          throw new Error(`多余参数 "${tok}"；附加项请写成 key=value（例如 mode=agent、provider=<provider>）`)
+        }
+      }
+    }
+
+    // Alias resolution: `mode` / `provider` follow whichever model tier the
+    // command is configuring. L2 is always an agent, so mode there is a no-op.
+    const keys = pairs.map((p) => p[0])
+    const hasL2 = keys.some((k) => k === 'level2Model' || k === 'level2Provider')
+    const hasL3 = keys.some((k) => k === 'level3Model' || k === 'level3Provider' || k === 'level3Mode')
+    const notes = []
+    const resolved = []
+    for (const [key, value] of pairs) {
+      if (key === 'mode') {
+        if (!hasL3 && hasL2) {
+          notes.push('二级固定为 agent 模式，mode 已忽略（mode 只用于 L3：level3Mode）')
+          continue
+        }
+        resolved.push(['level3Mode', value])
+        continue
+      }
+      if (key === 'provider') {
+        if (hasL2 && hasL3) {
+          throw new Error('同时改二级和三级时 provider= 有歧义，请写 level2Provider= 或 level3Provider=')
+        }
+        resolved.push([hasL3 ? 'level3Provider' : 'level2Provider', value])
+        continue
+      }
+      resolved.push([key, value])
+    }
+
+    const patch = {}
+    const lines = []
+    for (const [key, raw] of resolved) {
+      if (!(key in CONFIG_KEYS)) {
+        throw new Error(`未知配置项 "${key}"。可用：${Object.keys(CONFIG_KEYS).join(', ')}`)
+      }
+      const value = coerceConfigValue(key, raw)
+      validateConfigValue(key, value)
+      const prev = cfg[key]
+      cfg[key] = value
+      patch[key] = value
+      lines.push(`已更新 ${key}: ${prev} → ${value}`)
+      if (key === 'level1Model' || key === 'level2Model' || key === 'level3Model') {
+        if (cfg.autoTuneSweetSpot === true) {
+          const tuned = tuneSweetSpot(cfg, key, MODEL_PROFILES)
+          if (tuned.changed) {
+            for (const c of tuned.changes) {
+              patch[c.field] = cfg[c.field]
+              lines.push(`已联动更新 ${c.field}: ${c.from} → ${c.to}`)
+            }
+          } else if (tuned.profileMissing) {
+            lines.push('该模型无档案，甜点区未联动，可手动 /pipe-config <甜点区键> <值> 覆盖')
+          } else if (tuned.target) {
+            lines.push(`甜点区无需联动（${tuned.target} = ${cfg[tuned.target]}）`)
+          } else {
+            lines.push('此层无甜点区需要联动（三级输入/输出预算固定，不随模型变）')
+          }
+        } else {
+          lines.push('autoTuneSweetSpot 已关闭，甜点区未联动，可手动 /pipe-config <甜点区键> <值> 覆盖')
+        }
+      } else if ((key === 'level1ContextBudget' || key === 'level2ContextBudget') && cfg.autoTuneSweetSpot === true) {
+        lines.push('（甜点区手动值优先；下次改对应层模型时会按模型档案重算）')
+      } else if (
+        (key === 'level1DangerRatio' || key === 'level2DangerRatio' ||
+          key === 'level1SweetSpotRatio' || key === 'level2SweetSpotRatio' ||
+          key === 'level1ContextWindow' || key === 'level2ContextWindow') &&
+        cfg.autoTuneSweetSpot === true
+      ) {
+        const layerKey = key.startsWith('level1') ? 'level1Model' : 'level2Model'
+        const tuned = tuneSweetSpot(cfg, layerKey, MODEL_PROFILES)
         if (tuned.changed) {
           for (const c of tuned.changes) {
             patch[c.field] = cfg[c.field]
-            text += `\n已联动更新 ${c.field}: ${c.from} → ${c.to}`
+            lines.push(`已联动更新 ${c.field}: ${c.from} → ${c.to}`)
           }
-        } else if (tuned.profileMissing) {
-          text += '\n该模型无档案，甜点区未联动，可手动 /pipe-config <甜点区键> <值> 覆盖'
-        } else if (tuned.target) {
-          text += `\n甜点区无需联动（${tuned.target} = ${cfg[tuned.target]}）`
         } else {
-          text += '\n此层无甜点区需要联动（三级输入/输出预算固定，不随模型变）'
+          lines.push('该层模型无档案，未联动（可手动设对应 Budget 键）')
         }
-      } else {
-        text += '\nautoTuneSweetSpot 已关闭，甜点区未联动，可手动 /pipe-config <甜点区键> <值> 覆盖'
-      }
-    } else if ((a === 'level1ContextBudget' || a === 'level2ContextBudget') && cfg.autoTuneSweetSpot === true) {
-      text += '\n（甜点区手动值优先；下次改对应层模型时会按模型档案重算）'
-    } else if (
-      (a === 'level1DangerRatio' || a === 'level2DangerRatio' ||
-        a === 'level1SweetSpotRatio' || a === 'level2SweetSpotRatio' ||
-        a === 'level1ContextWindow' || a === 'level2ContextWindow') &&
-      cfg.autoTuneSweetSpot === true
-    ) {
-      // v97b — tuning a ratio/window should move the lines immediately instead of
-      // waiting for the next model switch.
-      const layerKey = a.startsWith('level1') ? 'level1Model' : 'level2Model'
-      const tuned = tuneSweetSpot(cfg, layerKey, MODEL_PROFILES)
-      if (tuned.changed) {
-        for (const c of tuned.changes) {
-          patch[c.field] = cfg[c.field]
-          text += `\n已联动更新 ${c.field}: ${c.from} → ${c.to}`
-        }
-      } else {
-        text += '\n该层模型无档案，未联动（可手动设对应 Budget 键）'
       }
     }
     savePersistedConfig(patch)
-    return { kind: 'success', text }
+    return { kind: 'success', text: [...lines, ...notes].join('\n'), changed: Object.keys(patch) }
   } catch (error) {
     return { kind: 'error', text: error?.message ?? String(error) }
   }

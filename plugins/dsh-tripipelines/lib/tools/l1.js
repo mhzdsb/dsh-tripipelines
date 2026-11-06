@@ -4,9 +4,20 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { text, LEVEL2_NAMES, TASK_STATES, estimateTokens, ensureDir, numCfg, jsonOutput, resolveInside } from '../util.js'
-import { validateTaskPlan, cleanupExpiredL2s } from '../gates.js'
-import { milestoneStates, loadActivation, saveActivation, addRunUsage, storeToBoard } from '../store.js'
+import { validateTaskPlan, validateAcceptanceCriteria, cleanupExpiredL2s } from '../gates.js'
+import { milestoneStates, loadActivation, saveActivation, loadModelSetup, saveModelSetup, addRunUsage, storeToBoard } from '../store.js'
 import { buildL2LeadPrompt } from '../prompts.js'
+import { MODEL_PROFILES, savePersistedConfig, tuneSweetSpot } from '../config.js'
+import {
+  autoPairAfterConfig,
+  buildModelSetupQuestion,
+  discoverLevel2Models,
+  discoverLevel3Models,
+  pickDefaultLevel2,
+  pickDefaultLevel3,
+  renderModelSetupMessage,
+  resolveModelProvider,
+} from '../models.js'
 import { measureLevel1Context, measureSessionTokens, resolveWorkspaceRoot } from '../dsh-compat.js'
 
 // v92.1 — workspace root for resolving relative scopeDir paths. v103 — the
@@ -55,6 +66,162 @@ function accountL2Tokens(ctx, cfg, r) {
   return delta
 }
 
+// v121 — per-project model onboarding. One call discovers every local L2/L3
+// model, renders the copyable `/pipe-config` block, and (optionally) applies the
+// choice. The choice is persisted exactly like `/pipe-config` (global
+// config.json) and remembered per workspace so the same project is not asked
+// twice. L1 pastes `message` verbatim and asks `question`.
+export function makeModelSetupTool(ctx, cfg, r) {
+  return {
+    name: 'pipeline_model_setup',
+    description:
+      'Onboarding (once per project, before pipeline_lock_requirements): list every locally available L2/L3 model with copyable /pipe-config commands, then apply the choice. Defaults: L2 = flash model, L3 = local engine #1 (/models order).',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        apply: {
+          type: 'string',
+          enum: ['defaults', 'custom'],
+          description: 'defaults = L2 flash + L3 local #1; custom = the level2Model / level2Provider / level3Model passed here, or with no values adopt whatever /pipe-config already set.',
+        },
+        level2Model: { type: 'string', description: 'Custom L2 model id (apply=custom).' },
+        level2Provider: { type: 'string', description: 'Custom L2 provider (apply=custom).' },
+        level3Model: { type: 'string', description: 'Custom L3 model id (apply=custom). Local engine id → executor; cloud provider model → agent (auto-paired).' },
+        level3Mode: { type: 'string', enum: ['auto', 'executor', 'agent'], description: 'L3 mode (apply=custom). Defaults to auto-detection: engine model → executor, cloud model → agent.' },
+      },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (_a, value) => text(value?.message ?? JSON.stringify(value)),
+    },
+    async execute(args = {}) {
+      const record = loadModelSetup(r.stateDir)
+      const alreadyConfigured = record.confirmed === true
+      const l2 = await discoverLevel2Models(ctx, cfg)
+      const l3 = await discoverLevel3Models(cfg)
+      const defaults = { level2: pickDefaultLevel2(l2, cfg), level3: pickDefaultLevel3(l3, cfg) }
+      const apply = args.apply === 'defaults' || args.apply === 'custom' ? args.apply : null
+      const warnings = []
+      let applied = null
+      if (apply) {
+        const patch = {}
+        const set = (key, value, currentValue) => {
+          if (typeof value !== 'string' || !value.trim()) return
+          const next = value.trim()
+          if (next === String(currentValue ?? '')) return
+          cfg[key] = next
+          patch[key] = next
+        }
+        if (apply === 'defaults') {
+          if (!defaults.level2 || !defaults.level3) {
+            throw new Error('无法计算默认模型：本地模型列表为空。先跑 /pipe-selftest 检查 llm 服务与 L3 引擎。')
+          }
+          set('level2Model', defaults.level2.model, cfg.level2Model)
+          set('level2Provider', defaults.level2.provider, cfg.level2Provider)
+          set('level3Model', defaults.level3.model, cfg.level3Model)
+          // The default L3 comes from the local engine; `auto` keeps both the HTTP
+          // executor and the subagent path available, and a cloud L3 switches to
+          // agent automatically when its model is applied.
+          set('level3Mode', 'auto', cfg.level3Mode)
+        } else {
+          const requested = {
+            level2Model: typeof args.level2Model === 'string' ? args.level2Model.trim() : '',
+            level2Provider: typeof args.level2Provider === 'string' ? args.level2Provider.trim() : '',
+            level3Model: typeof args.level3Model === 'string' ? args.level3Model.trim() : '',
+            level3Mode: ['auto', 'executor', 'agent'].includes(args.level3Mode) ? args.level3Mode : '',
+          }
+          // No values = adopt whatever /pipe-config already set (the user may have
+          // copied a command from the message and run it themselves).
+          if (requested.level2Model && l2.source === 'llm' && !l2.models.some((m) => m.id === requested.level2Model)) {
+            warnings.push(`level2Model "${requested.level2Model}" 不在当前 llm 列表里，已按自定义值写入。`)
+          }
+          if (requested.level3Model && l3.source === 'engine' && !l3.models.some((m) => m.id === requested.level3Model)) {
+            warnings.push(`level3Model "${requested.level3Model}" 不在本机 /models 列表里，已按自定义值写入。`)
+          }
+          // v122 — carry the provider with the model. A model id is only valid on
+          // the providers that advertise it; letting `qwen3.7-plus` ride on
+          // `deepseek-official` reaches the wrong API and fails there.
+          if (requested.level2Model && l2.models.length > 0) {
+            const entry = l2.models.find((m) => m.id === requested.level2Model)
+            const chosenProvider = requested.level2Provider || cfg.level2Provider
+            if (entry && entry.providers?.length && !entry.providers.includes(chosenProvider)) {
+              if (!requested.level2Provider) {
+                requested.level2Provider = entry.providers[0]
+                warnings.push(`模型 "${requested.level2Model}" 属于 provider "${entry.providers[0]}"（当前 ${chosenProvider} 不提供），已自动配套 level2Provider=${entry.providers[0]}。`)
+              } else {
+                warnings.push(`provider "${chosenProvider}" 不提供 "${requested.level2Model}"（可用：${entry.providers.join(', ')}），已按你指定的 provider 写入。`)
+              }
+            }
+          }
+          set('level2Model', requested.level2Model, cfg.level2Model)
+          set('level2Provider', requested.level2Provider, cfg.level2Provider)
+          set('level3Model', requested.level3Model, cfg.level3Model)
+          set('level3Mode', requested.level3Mode, cfg.level3Mode)
+          if (requested.level3Model) {
+            const pairNotes = await autoPairAfterConfig(
+              ctx,
+              cfg,
+              requested.level3Mode ? ['level3Model', 'level3Mode'] : ['level3Model'],
+            )
+            warnings.push(...pairNotes)
+          }
+        }
+        // Same sweet-spot contract as /pipe-config level2Model.
+        if (patch.level2Model && cfg.autoTuneSweetSpot !== false) {
+          const tune = tuneSweetSpot(cfg, 'level2Model', MODEL_PROFILES)
+          for (const change of tune.changes ?? []) patch[change.field] = change.to
+        }
+        const changed = Object.keys(patch)
+        if (changed.length > 0) savePersistedConfig(patch)
+        saveModelSetup(r.stateDir, {
+          mode: apply,
+          level2Model: cfg.level2Model,
+          level2Provider: cfg.level2Provider,
+          level3Model: cfg.level3Model,
+          level3Provider: cfg.level3Provider,
+          level3Mode: cfg.level3Mode,
+        })
+        applied = {
+          mode: apply,
+          changed,
+          level2Provider: cfg.level2Provider,
+          level2Model: cfg.level2Model,
+          level3Model: cfg.level3Model,
+          level3Provider: cfg.level3Provider,
+          level3Mode: cfg.level3Mode,
+          warnings,
+        }
+      }
+      const current = { level2Provider: cfg.level2Provider, level2Model: cfg.level2Model, level3Model: cfg.level3Model, level3Provider: cfg.level3Provider, level3Mode: cfg.level3Mode }
+      const message = renderModelSetupMessage({
+        l2,
+        l3,
+        defaults,
+        current,
+        alreadyConfigured: alreadyConfigured && !apply,
+        applied,
+      })
+      return {
+        alreadyConfigured,
+        applied,
+        defaults,
+        current,
+        l2: l2.models,
+        l3: l3.models,
+        sources: { l2: l2.source, l3: l3.source },
+        errors: [...l2.errors, ...l3.errors],
+        warnings,
+        question: buildModelSetupQuestion({ defaults }),
+        message,
+        next: applied
+          ? '模型已定。继续需求访谈，然后 pipeline_lock_requirements。'
+          : '把 message 原样贴给用户，然后用 ask_user_question 提问 question；用户不选就再调 pipeline_model_setup({apply:"defaults"})。',
+      }
+    },
+  }
+}
+
 export function makeLockTool(ctx, cfg, r) {
   return {
     name: 'pipeline_lock_requirements',
@@ -77,7 +244,12 @@ export function makeLockTool(ctx, cfg, r) {
     },
     output: {
       schema: { type: 'object', additionalProperties: true },
-      render: (_a, value) => text(`Requirement locked.\nrun_id: ${value.run_id}\n${value.requirement}${value.activationHint ? `\n\n${value.activationHint}` : ''}`),
+      render: (_a, value) =>
+        text(
+          `Requirement locked.\nrun_id: ${value.run_id}\n${value.requirement}` +
+            `${value.modelSetupHint ? `\n\n${value.modelSetupHint}` : ''}` +
+            `${value.activationHint ? `\n\n${value.activationHint}` : ''}`,
+        ),
     },
     async execute(args) {
       if (typeof args.requirement !== 'string' || !args.requirement.trim()) {
@@ -89,6 +261,25 @@ export function makeLockTool(ctx, cfg, r) {
       let activationHint = null
       if (cfg.activationGate && !activation.confirmed && !args.activation) {
         activationHint = 'ACTIVATION GATE (one-time): before this run, ask the user once with ask_user_question — 三级流水线要在这里启用吗？A 启用（推荐） / B 只做普通回答 / C 记住此工作区以后默认启用。Then call pipeline_lock_requirements again with activation=enable|normal|remember (a locked run keeps working, this only records the choice).'
+      }
+      // v121 — model onboarding gate: the project should have picked L2/L3 before
+      // the run starts. Same shape as activationHint: a prompt-layer instruction,
+      // not a hard block (the user may explicitly not care).
+      const setup = loadModelSetup(r.stateDir)
+      let modelSetupHint = null
+      if (!setup.confirmed) {
+        modelSetupHint = 'MODEL SETUP (once per project, before the run): call pipeline_model_setup, paste its `message` to the user VERBATIM (every locally available L2/L3 model with copyable /pipe-config commands), then ask its `question` via ask_user_question. If the user does not choose, call pipeline_model_setup({apply:"defaults"}) (L2 flash, L3 local #1).'
+      }
+      // v119 — a new run must not inherit the previous run's L2s. They used to
+      // stay `in_progress` forever and keep appearing in pipeline_status's
+      // waitingFor. Archive every live lead; the record stays inspectable.
+      for (const a of r.store.agents.values()) {
+        if (a.state === 'in_progress' || a.state === 'replaced') {
+          const prev = a.state
+          a.state = 'archived'
+          a.archivedAt = new Date().toISOString()
+          a.reason = `superseded by a new run (was ${prev})`
+        }
       }
       r.store.runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
       r.store.requirement = args.requirement.trim()
@@ -116,6 +307,7 @@ export function makeLockTool(ctx, cfg, r) {
         scope: args.scope ?? null,
         constraints: args.constraints ?? [],
         reuseNote: args.reuseNote ?? null,
+        modelSetupHint,
         activationHint,
         lockedAt: new Date().toISOString(),
       }
@@ -173,6 +365,10 @@ export function makePlanTool(ctx, cfg, r) {
         throw new Error('lock requirements first with pipeline_lock_requirements')
       }
       const tasks = validateTaskPlan(args.taskPlan)
+      // v119 — refuse to plan work the gate can never pass (prose acceptance with
+      // a semantic threshold above the 0.5 cap). The error names the three ways
+      // out: assertions, `cmd:` acceptance, or an explicit lower threshold.
+      validateAcceptanceCriteria(tasks, cfg)
       for (const t of tasks) {
         const prevTask = r.store.tasks.get(t.id)
         r.store.tasks.set(t.id, {
@@ -293,6 +489,9 @@ export function makeStatusTool(ctx, cfg, r) {
         taskStates: byState(board.tasks),
         subtaskStates: byState(board.subtasks),
         counters: r.store.counters,
+        // v119 — these two numbers measure different things and used to look
+        // like a contradiction (llmCalls:0 next to measuredTokens:62466).
+        countersNote: 'llmCalls/tokensIn/tokensOut 只统计插件自己发起的 L3/LLM 调用；L2 会话的真实用量只计入 measuredTokens（与 tokensUsed 同源）。',
         // v112 (B14) — three distinct numbers, explicitly named: `trackedTokens`
         // is what this plugin could account for, `measuredTokens` includes the
         // real size of live L2 sessions, `tokensUsed` is the budget guard's number.
@@ -419,8 +618,26 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
       const promptText = buildL2LeadPrompt(args.prompt, args.acceptance, cfg, handoff, scopeRel)
       const promptTokens = estimateTokens(promptText)
       // v94 — per-lead model override (a hard module can get a stronger model).
-      const l2Provider = typeof args.provider === 'string' && args.provider.trim() ? args.provider.trim() : cfg.level2Provider
+      let l2Provider = typeof args.provider === 'string' && args.provider.trim() ? args.provider.trim() : cfg.level2Provider
       const l2Model = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : cfg.level2Model
+      // v122 — pre-flight pairing check. Sending a model id to a provider that
+      // does not serve it surfaces as an opaque API error in the chat, so fix
+      // (or at least warn about) the pairing before spawn.
+      let l2ProviderNote = null
+      const explicitProvider = typeof args.provider === 'string' && args.provider.trim()
+      try {
+        const probe = await resolveModelProvider(ctx, { provider: l2Provider, model: l2Model })
+        if (!probe.ok && probe.suggested) {
+          if (explicitProvider) {
+            l2ProviderNote = `⚠️ 你显式指定的 provider "${l2Provider}" 不提供 "${l2Model}"；该模型在 ${probe.providers.join(', ')} 下。仍按你的指定派发，若报 model-not-supported 请改 provider。`
+          } else {
+            l2ProviderNote = `模型 "${l2Model}" 不在 provider "${l2Provider}" 的列表里；已自动改用 "${probe.suggested}"（可选：${probe.providers.join(', ')}）。`
+            l2Provider = probe.suggested
+          }
+        } else if (!probe.ok && probe.unknown) {
+          l2ProviderNote = `⚠️ 当前 llm 列表里没有 "${l2Model}"；仍按 ${l2Provider} 派发，若报模型不支持请检查 /pipe-config level2Model。`
+        }
+      } catch { /* pairing is best-effort: a broken llm must not block a spawn */ }
       // v84 — startActivation (no toolFilter; adjacency lives in the registry guard).
       const result = await subs.startActivation({
         provider: cfg.spawnProvider || 'spawn',
@@ -477,6 +694,7 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
         provider: l2Provider,
         model: l2Model,
         scopeDir: scopeRel,
+        ...(l2ProviderNote ? { providerNote: l2ProviderNote } : {}),
         ...(spawnHint ? { spawnHint } : {}),
       }
     },
@@ -718,10 +936,54 @@ export function makeSelftestTool(ctx, cfg, r) {
       add('subagents.drainChildren', !!subs && typeof subs.drainChildren === 'function', 'drain old L2s')
       const llm = ctx.get ? ctx.get('llm') : undefined
       add('llm service', !!llm, llm ? `level2 ${cfg.level2Provider}/${cfg.level2Model}` : 'unavailable — L2 decompose/review fail')
+      // v122 — the L2 model must be served by the configured provider; otherwise
+      // the spawn fails at the remote API with "supported API model names are ...".
+      let pairingOk = true
+      let pairingDetail = 'skipped（llm 不可用）'
+      if (llm && typeof llm.listModels === 'function') {
+        try {
+          const list = await llm.listModels(cfg.level2Provider)
+          const ids = (Array.isArray(list) ? list : []).map((m) => (typeof m === 'string' ? m : m?.id)).filter(Boolean)
+          if (ids.length === 0) {
+            pairingDetail = `${cfg.level2Provider} 没有返回模型列表`
+          } else if (ids.includes(cfg.level2Model)) {
+            pairingDetail = `${cfg.level2Model} ✔`
+          } else {
+            pairingOk = false
+            const alt = []
+            for (const p of (typeof llm.listProviders === 'function' ? llm.listProviders() : []) ?? []) {
+              const pid = p?.id ?? p?.provider
+              if (!pid || pid === cfg.level2Provider) continue
+              try {
+                const l = await llm.listModels(pid)
+                if ((Array.isArray(l) ? l : []).some((m) => (typeof m === 'string' ? m : m?.id) === cfg.level2Model)) alt.push(pid)
+              } catch { /* ignore one broken provider */ }
+            }
+            pairingDetail = `${cfg.level2Provider} 不提供 ${cfg.level2Model}` + (alt.length ? `；它在 ${alt.join(', ')} 下，试 /pipe-config level2Provider ${alt[0]}` : '')
+          }
+        } catch (e) {
+          pairingDetail = `检查失败：${e?.message ?? e}`
+        }
+      }
+      add('L2 model/provider', pairingOk, pairingDetail)
+      // v123 — an agent-mode L3 lives on a cloud provider, not on the local
+      // OpenAI-compatible endpoint, so check model/provider pairing instead.
+      const l3Mode = cfg.level3Mode ?? 'auto'
       const endpoint = String(cfg.level3Endpoint ?? '').replace(/\/$/, '')
       let engineOk = false
       let engineDetail = '未配置 level3Endpoint'
-      if (endpoint) {
+      let engineName = 'L3 engine'
+      if (l3Mode === 'agent') {
+        engineName = 'L3 agent provider'
+        const probe = await resolveModelProvider(ctx, { provider: cfg.level3Provider, model: cfg.level3Model })
+        engineOk = probe.skipped === true || probe.ok === true
+        engineDetail = probe.skipped
+          ? 'llm 不可用，跳过配对检查'
+          : probe.ok
+            ? `agent 模式：${cfg.level3Provider}/${cfg.level3Model} ✔`
+            : `agent 模式但配对无效：${cfg.level3Provider} 不提供 ${cfg.level3Model}` +
+              (probe.suggested ? `；试 /pipe-config level3Provider ${probe.suggested}` : '')
+      } else if (endpoint) {
         try {
           const res = await fetch(`${endpoint}/models`, { signal: AbortSignal.timeout(4000) })
           engineOk = res.ok
@@ -736,7 +998,7 @@ export function makeSelftestTool(ctx, cfg, r) {
           engineDetail = `不可达：${err?.message ?? err}（本地引擎不可用时会自动降级为 L2 直写）`
         }
       }
-      add('L3 engine', engineOk, engineDetail)
+      add(engineName, engineOk, engineDetail)
       const degraded = checks.filter((c) => !c.ok).map((c) => c.name)
       // v112 (B15) — `ok` used to be false whenever the optional L3 engine was
       // missing, which read as "the plugin is broken". `ready` is the real
@@ -773,7 +1035,24 @@ export function makeAcceptMilestoneTool(ctx, cfg, r) {
       if (!m) throw new Error(`unknown milestone id: ${args.milestoneId}`)
       const st = milestoneStates(r.store).find((x) => x.id === m.id)
       if (!st || st.state !== 'done') {
-        throw new Error(`milestone ${m.id} 尚未完成（${st?.done ?? 0}/${st?.total ?? 0}）——先让其任务全部 done`)
+        // v119 — a bare "0/1" told the caller nothing. List the exact task /
+        // subtask / check that is blocking the milestone.
+        const blockers = []
+        for (const id of m.taskIds) {
+          const t = r.store.tasks.get(id)
+          if (!t) { blockers.push(`${id}(missing)`); continue }
+          if (t.state === 'done') continue
+          const subs = (t.subtaskIds ?? []).map((sid) => r.store.subtasks.get(sid)).filter(Boolean)
+          const stalled = subs.filter((s) => s.state !== 'done')
+          const detail = stalled.length
+            ? stalled.map((s) => `${s.id}:${s.state}${s.reason ? `(${String(s.reason).slice(0, 120)})` : ''}`).join(' / ')
+            : '无子任务'
+          blockers.push(`task ${id} ${t.state}${t.reason ? ` — ${String(t.reason).slice(0, 140)}` : ''}；${detail}`)
+        }
+        throw new Error(
+          `milestone ${m.id} 尚未完成（${st?.done ?? 0}/${st?.total ?? 0}）——阻塞项：${blockers.join('；') || '任务记录缺失'}。` +
+            `先 pipeline_review 让子任务/任务通过质量门；若验收条件本身写错，改 pipeline_plan 的 acceptance（断言或 cmd:）。`,
+        )
       }
       m.state = 'accepted'
       m.acceptedAt = new Date().toISOString()

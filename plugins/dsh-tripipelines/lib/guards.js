@@ -9,6 +9,7 @@
 // the whole three-tier boundary advisory.
 
 export const RUN_FOOTER_TOOLS = new Set([
+  'pipeline_model_setup',
   'pipeline_lock_requirements',
   'pipeline_plan',
   'pipeline_status',
@@ -81,6 +82,7 @@ export function withRunFooter(tool) {
 // subtasks). v102 listed it as L1-only while the protocol forbade L1 from calling
 // it and the L2 guard rejected L2 callers: it had no legal caller at all.
 export const L1_ONLY_TOOLS = new Set([
+  'pipeline_model_setup',
   'pipeline_lock_requirements',
   'pipeline_plan',
   'pipeline_classify',

@@ -13,7 +13,7 @@ const check = (label, cond, extra) => {
   else { failed++; console.log(`FAIL  ${label}${extra ? `  :: ${extra}` : ''}`) }
 }
 
-const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js']
+const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js']
 for (const f of flat) copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 mkdirSync(join(tmp, 'knowledge'), { recursive: true })
@@ -52,6 +52,7 @@ const ctx = {
 }
 
 const expected = {
+  makeModelSetupTool: { module: l1, name: 'pipeline_model_setup' },
   makeLockTool: { module: l1, name: 'pipeline_lock_requirements' },
   makePlanTool: { module: l1, name: 'pipeline_plan' },
   makeStatusTool: { module: l1, name: 'pipeline_status' },
@@ -101,7 +102,7 @@ check('plugin applies cleanly', (() => {
       logger: { info: () => {}, warn: () => {} },
     }
     pluginMod.apply(ctx2, { ...cfgMod.DEFAULT_CONFIG })
-    check('19 tools registered', registered.length === 19, String(registered.length))
+    check('20 tools registered', registered.length === 20, String(registered.length))
     check('7 commands registered', commands.length === 7, String(commands.length))
     return true
   } catch (e) {

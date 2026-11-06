@@ -5,16 +5,18 @@
 // Self-contained plugin: Node builtins plus the injected `tools`, `systemPrompt`,
 // `skills`, and `commands` services. No external npm dependencies.
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { join, relative } from 'node:path'
 
 import { DEFAULT_CONFIG, loadPersistedConfig, savePersistedConfig, migratePersistedLevel3Config, mergeConfigLayers, loadProjectConfig, handleConfigCommand } from './config.js'
 import { milestoneStates, budgetRefusal, runFooter } from './store.js'
 import { createWorkspaceRegistry } from './workspaces.js'
 import { buildProtocolText, buildProtocolOffText, SKILL_BODY } from './prompts.js'
 import { measureLevel1Context } from './dsh-compat.js'
+import { autoPairAfterConfig } from './models.js'
 import { installBoardRoute } from './board-route.js'
 import { RUN_FOOTER_TOOLS, withRunFooter, setResultFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
-import { makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
+import { makeModelSetupTool, makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
 import { makeKnowledgeTools } from './tools/knowledge.js'
 import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeReviewTool, makeSpawnLocalExecutorTool, makeRegisterOutputTool } from './tools/l2l3.js'
 
@@ -58,6 +60,7 @@ function definitionStore() {
 
 function buildEntryTools(ctx, cfg, r) {
   return [
+    makeModelSetupTool(ctx, cfg, r),
     makeLockTool(ctx, cfg, r),
     makePlanTool(ctx, cfg, r),
     makeDecomposeTool(ctx, cfg, r),
@@ -270,11 +273,23 @@ function apply(ctx, config) {
   })
 
   // 4. Interactive configuration command (works on desktop; no file editing).
+  // v123 — after a model change, pair its provider (and L3 mode) automatically so
+  // a bare `/pipe-config level2Model qwen3.7-plus` is enough.
   ctx.commands.register({
     name: 'pipe-config',
     description: 'view or change the three-tier orchestrator configuration (models, thresholds, budget)',
-    input: { hint: '[<key> [<value>] | list | reset]' },
-    handler: (invocation) => handleConfigCommand(cfg, invocation.rawInput),
+    input: { hint: '[<key> [<value>] [mode=agent] [provider=<pid>] | list | reset]' },
+    handler: async (invocation) => {
+      const result = handleConfigCommand(cfg, invocation.rawInput)
+      if (result?.kind !== 'success' || !Array.isArray(result.changed) || result.changed.length === 0) return result
+      try {
+        const notes = await autoPairAfterConfig(ctx, cfg, result.changed)
+        if (notes.length > 0) result.text = `${result.text}\n${notes.join('\n')}`
+      } catch {
+        // pairing is best-effort; the config change itself already succeeded
+      }
+      return result
+    },
   })
 
   ctx.commands.register({
@@ -328,7 +343,7 @@ function apply(ctx, config) {
 
   ctx.commands.register({
     name: 'pipe-research',
-    description: 'open a structured research note (7 steps + anti-laziness rules) for a hard decision; the note lands in knowledge/research/ and is searchable by pipeline_recall',
+    description: 'open a structured research note (7 steps + anti-laziness rules) and start the 7-step interview for a hard decision; the note lands in knowledge/research/ and is searchable by pipeline_recall',
     input: { hint: '<议题，例如：下一步投哪条路径>' },
     handler: (invocation) => {
       const entry = registry.resolve(invocation)
@@ -383,9 +398,32 @@ function apply(ctx, config) {
       } catch (err) {
         return { kind: 'error', text: `无法写入研讨文件：${err?.message ?? err}` }
       }
+      // v120 — the skeleton alone is not a research session. Wake the agent with
+      // a first-step prompt so the 7-step interview actually starts, instead of
+      // leaving an empty template behind (the /goal command uses the same
+      // invocation.agent.followup handoff for composer attachments).
+      const rel = String(relative(entry.root, file) || file).replace(/\\/g, '/')
+      let started = false
+      try {
+        const agent = invocation.agent
+        if (agent && typeof agent.followup === 'function') {
+          agent.followup({
+            id: randomUUID(),
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `开始研讨：${topic}\n\n骨架已写入 ${rel}。请按骨架的 7 步逐节推进：先用 ask_user_question 问第 1 步（立项）所需的 1-2 个问题（问题本身、成功判据、预算），不要一次把 7 步的问题都倒出来；我回答后把该节写回文件，再进入下一步；到第 7 步时提醒我把结论回写 decisions.md 或 checkpoint。`,
+            }],
+            source: { kind: 'user' },
+          })
+          started = true
+        }
+      } catch { /* older host without a wakeable agent: fall back to the text hint */ }
       return {
         kind: 'success',
-        text: `研讨骨架已创建：${file}\n\n填完后用 pipeline_checkpoint 或直接编辑 decisions.md 把结论回写台账。\n（v98：研讨层目前手动触发，先跑 2~3 次再考虑自动化阈值。）`,
+        text: started
+          ? `研讨骨架已创建：${file}\n\n已把第 1 步（立项）的提问发到对话里；回答后我会续写骨架。`
+          : `研讨骨架已创建：${file}\n\n当前宿主没有可唤醒的 agent；请在对话里说「开始研讨」，我会按 7 步继续提问。`,
       }
     },
   })

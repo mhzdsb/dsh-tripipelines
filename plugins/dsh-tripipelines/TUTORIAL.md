@@ -2,7 +2,7 @@
 
 本插件 `dsh-tripipelines` 是一套在 DeepSeek Harness (DSH) 中运行的
 **三级模型分层协作开发系统**。它已经安装并激活在你的桌面端里，无需重启即可使用。
-> Level-3 走任意 **OpenAI 兼容**本地引擎（llama.cpp / vLLM / Ollama / strata 等）：端点用 `level3Endpoint`、模型用 `level3Model`，`/pipe-selftest` 会探测 `/v1/models`。
+> Level-3 默认走任意 **OpenAI 兼容**本地引擎（llama.cpp / vLLM / Ollama / strata 等）：端点用 `level3Endpoint`、模型用 `level3Model`，`/pipe-selftest` 会探测 `/v1/models`。也可以用云端模型（`/pipe-config level3Model <id> mode=agent`），此时 L3 作为 DSH 子代理运行、不需要本地端点。
 > 适配 DSH 新版 subagents API（`startActivation` / `drainChildren`）；插件名 `dsh-tripipelines`、命令 `/pipe-*`、工具 `pipeline_*`，代码拆成 `lib/` 下多个模块。
 
 ---
@@ -32,7 +32,7 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 
 新项目启动后，主 agent（唯一跟用户对话的 agent）会按下面流程走，无需你手动指挥：
 
-1. **引导开机**：主动贴出当前三级模型 + 可复制的改模型命令（如 `/pipe-config level2Model deepseek-flash`），并告知「不需要三级就回复『不用三级模式』或 `/pipe-config mode off`」。
+1. **开工定模型**：先调 `pipeline_model_setup`，把它返回的 `message` 原样贴出——本机全部二级/三级模型各一行可复制的 `/pipe-config level2Model <id>` / `/pipe-config level3Model <id>`，默认项标 `← 默认`；L3 段还会给出云端模型的 `mode=agent` 示例。再用 `ask_user_question` 问「用默认 / 我自己指定 / 本项目不用三级协作」。不选就落默认（L2 `deepseek-flash`，L3 本机 `/models` 第 1 个）；同一项目记在 `<stateDir>/model-setup.json`，不再追问。
 2. **需求访谈**（多轮）：用 5 Whys → MoSCoW 范围 → 模块/依赖 → INVEST + Given-When-Then 验收 → 约束，逐轮追问直到每个模块都能机械验收。
 3. **适配性评估**：主动告诉你该不该用三级——「多模块/多纯函数/依赖 DAG/看重成本」适用；「单文件小脚本/需求模糊/无本地 ninfer/强耦合」不适用，并给关闭方式。
 4. **自适应调度**：按需求拆模块（规模→模块数推荐：单文件 1 个、3–8 文件 2–3 个、多子系统 4–8 个；≥3 个独立关注点必须 ≥3 个 L2） → 每模块 spawn 一个长活二级（复用）→ 二级分解写码、极简单函数下沉三级 → 依赖 DAG 排序 → `pipeline_classify` 路由。
@@ -43,6 +43,7 @@ Level 1（主模型 / 协调者）    Level 2（副模型 / 模块负责人）  
 
 | 工具 | 层级 | 作用 |
 |---|---|---|
+| `pipeline_model_setup` | L1 | 开工先定模型：发现本机全部 L2/L3 模型，贴出可复制 `/pipe-config` 行，落默认或自定义（v121） |
 | `pipeline_lock_requirements` | L1 | 需求确认后锁定，生成 `requirement_lock.json`，开启一个 run（可带 `activation` 激活答案） |
 | `pipeline_plan` | L1 | 提交并校验结构化 TaskPlan（任务分解 + 里程碑声明 `milestones`） |
 | `pipeline_spawn_module_lead` | L1→L2 | 生成长活二级（continuable subagent；默认配置模型，可传 `provider`/`model` 覆盖） |
@@ -115,10 +116,13 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 ```text
 /pipe-config level3Model qwen3.8-27b-gsq-rco-iq3-s-mtp
 /pipe-config level2Model deepseek-flash
+/pipe-config level3Model qwen3.7-plus mode=agent     # 云端 L3：作为 DSH 子代理运行（provider 自动配对）
 /pipe-config semanticGateThreshold 0.6
 /pipe-config maxLevel2Agents 4
 /pipe-config level3Compression L0
 ```
+
+改 `level2Model`/`level3Model` 时只写模型名即可，命令结束会自动配套正确的 provider（输出 `🔧 已自动配套 level2Provider=…`）；L3 还可以在同一条命令里带 `mode=executor|agent|auto`。
 
 ### 3.1 全部配置项
 
@@ -126,13 +130,15 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 |---|---|---|
 | `level2Provider` | `deepseek-official` | 二级模型 provider |
 | `level2Model` | `deepseek-flash` | 二级模块负责人模型 |
-| `level3Model` | `qwen3.8-27b-gsq-rco-iq3-s-mtp` | 三级本地模型（ninfer） |
-| `level3Endpoint` | 空（必须显式配置） | OpenAI 兼容接口基址，例如 `http://127.0.0.1:8080/v1` |
-| `level3Provider` | `ninfer-local` | agent 式 L3 执行器使用的 LLM provider |
+| `level3Model` | `qwen3.8-27b-gsq-rco-iq3-s-mtp` | 三级模型（本地引擎或云端 provider 模型） |
+| `level3Mode` | `auto` | 三级执行模式（v123）：`executor` 本地端点一次性执行 / `agent` DSH 子代理（云端模型必用）/ `auto` 按模型来源判断 |
+| `level3Endpoint` | 空（必须显式配置） | OpenAI 兼容接口基址，例如 `http://127.0.0.1:8080/v1`（`executor` 模式使用） |
+| `level3Provider` | `ninfer-local` | `agent` 模式 L3 执行器使用的 LLM provider（命令会自动配套） |
 | `spawnProvider` | `spawn` | subagent provider 名（一般不用改） |
 | `level3InputBudget` | `1200` | 三级子任务输入 token 上限（超限先压缩，仍超则提示拆分） |
 | `level3MaxOutputTokens` | `4096` | 三级输出 token 上限 |
-| `semanticGateThreshold` | `0.7` | 质量门评分阈值（0~1） |
+| `commandAcceptanceTimeoutMs` | `120000` | `cmd:` 验收命令超时，毫秒（v119） |
+| `semanticGateThreshold` | `0.7` | 质量门评分阈值（0~1）；关键词分上限 0.5，计划期会拒绝「阈值 > 0.5 且验收不可执行」的任务（v119） |
 | `maxCodeLines` | `100` | 三级子任务代码行数上限 |
 | `maxLevel3Retries` | `5` | 三级子任务最大重试次数（超限升级不重试） |
 | `maxLevel3Concurrency` | `1` | 三级本地执行器最大并发（ninfer 单实例串行） |
@@ -209,11 +215,11 @@ dsh plugin --profile web add <本插件目录的绝对路径>
     "tasks": [
       { "id": "T1", "desc": "实现加法函数 add(a,b)",
         "assignee": "calculator",
-        "acceptance": "add 函数返回两数之和",
+        "acceptance": "add(2,3)==5",
         "depends_on": [] },
       { "id": "T2", "desc": "实现减法函数 sub(a,b)",
         "assignee": "calculator",
-        "acceptance": "sub 函数返回两数之差",
+        "acceptance": "sub(2,3)==-1",
         "depends_on": ["T1"] }
     ],
     "milestones": [
@@ -225,7 +231,10 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 
 - `assignee` 由 L1 按职责**自由命名**（如 `calculator` / `backend` / `frontend`），同一模块同名、不同模块不同名即可；上限见 `maxLevel2Agents`（默认 10）。
 - `milestones`（v89，可选）：声明里程碑及其包含的 taskIds；任务全 `done` 后里程碑自动 `done`，用户验收后调 `pipeline_accept_milestone`。
-- `acceptance` 必须**可机械检查**（如“JSON 可解析”“返回正确和值”）。
+- `acceptance` 必须**可机械检查**，三选一（v119 在 `pipeline_plan` 时校验）：
+  - 断言形态 `函数(参数)==期望` / `===`（JS 与 Python 都真跑）；
+  - 命令形态 `cmd: <命令>`（在工作区根目录执行，退出码 0 才算过；适合读文件/比对/`pytest` 这类文件任务）；
+  - 关键词分形态：仅当 `semanticGateThreshold ≤ 0.5` 时可用，否则计划期直接报错。
 - `depends_on` 声明依赖：`T2` 依赖 `T1`，所以 `T1` 完成前 `T2` 不能开始。
 
 ### 4.4 第 3 步：分解任务（L2）
@@ -399,7 +408,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 | 三级子任务反复失败 | 受 `maxLevel3Retries`(5) 限制，超限返回 `escalated:true` 并升级到二级接管，不会无限重试 |
 | 三级模型输出不是 JSON | 已用 `format:json` + 容错解析（剥 markdown 围栏/取花括号）；仍失败会返回 `local model returned non-JSON` |
 | 子任务被拒（token 超限） | 子任务输入超过 `level3InputBudget`(500)；把任务描述拆得更细，或调大上限 |
-| 语义评分偏低导致 `failed` | `acceptance` 关键词与产出不匹配；用「函数名 + 返回什么」这类具体措辞，或降低 `semanticGateThreshold` |
+| 语义评分偏低导致 `failed` | 关键词分封顶 0.5；把 `acceptance` 改成断言（`add(2,3)==5`）或命令（`cmd: python dev/check.py`）；只有显式把 `semanticGateThreshold` 调到 ≤0.5 才允许纯关键词验收 |
 
 ---
 
@@ -412,5 +421,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 3. 直接描述一个任务（如「做一个加密解密 CLI」），看主 agent 是否自动走四阶段流程。
 
 > 说明：语义评分是确定性的「结构 + 词干关键词覆盖」代理（结构 60% + 关键词 40%），
-> 阈值默认 0.7；v104 起该代理**封顶 0.5**，因此没有可执行断言时无法单独过门——这是有意的 fail-closed：
-> 要过质量门，验收里请写 `函数(参数)==期望`（JS 与 Python 都支持），或显式把 `semanticGateThreshold` 调到 0.5 以下。
+> 阈值默认 0.7；v104 起该代理**封顶 0.5**，因此没有可执行断言时无法单独过门——这是有意的 fail-closed。
+> v119 起 `pipeline_plan` 会在计划期拒绝这种任务，并提示三种改法：写成断言 `函数(参数)==期望`、
+> 写成命令 `cmd: <命令>`（工作区集成验收），或显式把 `semanticGateThreshold` 调到 0.5 以下。
+

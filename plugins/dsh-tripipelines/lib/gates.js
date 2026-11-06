@@ -3,8 +3,8 @@
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
-import { isPlainObj, RESULT_STATUS_OK, normalizeStatus, semanticScore } from './util.js'
+import { execFileSync, execSync } from 'node:child_process'
+import { isPlainObj, RESULT_STATUS_OK, normalizeStatus, semanticScore, SEMANTIC_SCORE_CAP, numCfg } from './util.js'
 
 // ---------------------------------------------------------------------------
 // Quality gates (DoD + JSON + semantic) — deterministic, mechanically checkable
@@ -43,6 +43,49 @@ export function extractAssertions(acceptance) {
     out.push({ name: m[1], args: m[2].trim(), expected: m[4], op: m[3] })
   }
   return out
+}
+
+// v119 — a task whose deliverable really touches files (sync a doc, regenerate
+// an index, run a build) cannot be proven by a pure-function assertion without
+// weakening the sandbox that executes model-written code. Such a task may write
+// ONE acceptance command on its own line instead:
+//   cmd: node dev/check_sync.mjs
+// The command runs in the WORKSPACE ROOT and passes only on exit code 0. The
+// sandboxed assertion runner stays untouched (no imports, no IO for model code).
+const COMMAND_RE = /^[ \t]*(?:cmd|run|command)[ \t]*:[ \t]*(.+)$/im
+
+export function extractCommand(acceptance) {
+  const m = String(acceptance ?? '').match(COMMAND_RE)
+  const cmd = m ? m[1].trim() : ''
+  return cmd || null
+}
+
+// The gate has three explicit modes; the mode decides which evidence counts.
+export function acceptanceMode(acceptance) {
+  if (extractAssertions(acceptance).length > 0) return 'assertion'
+  if (extractCommand(acceptance)) return 'command'
+  return 'semantic'
+}
+
+// v119 — fail at PLAN time instead of letting review discover an unreachable
+// gate. semanticScore() is capped at SEMANTIC_SCORE_CAP (0.5), so a 0.7 threshold
+// can never pass without an assertion or a command: the old behaviour planned
+// work that the gate would always reject (defect: "no assertion ⇒ 0.5 < 0.7").
+export function validateAcceptanceCriteria(tasks, cfg) {
+  const threshold = Number(cfg?.semanticGateThreshold ?? 0.7)
+  for (const t of Array.isArray(tasks) ? tasks : []) {
+    const mode = acceptanceMode(t?.acceptance)
+    if (mode === 'semantic' && threshold > SEMANTIC_SCORE_CAP) {
+      throw new Error(
+        `task ${t.id}: acceptance 没有可执行断言，也没有 cmd: 命令；semanticGateThreshold=${threshold} > ${SEMANTIC_SCORE_CAP}，这条验收永远不可能通过。` +
+          `改法：① 断言式 \`add(2,3)==5\`；② 命令式 \`cmd: node dev/check_sync.mjs\`（在工作区根执行，exit 0 通过）；` +
+          `③ 或显式把 semanticGateThreshold 调到 ≤${SEMANTIC_SCORE_CAP}（只做关键词弱匹配，明确接受近似）。`,
+      )
+    }
+    if (mode === 'command' && cfg?.allowCodeExecution === false) {
+      throw new Error(`task ${t.id}: acceptance 用了 cmd: 命令验收，但 allowCodeExecution=false；先开启执行，或改用断言、降低阈值。`)
+    }
+  }
 }
 
 // Only a rough language guess is needed: the guard below is conservative either
@@ -235,7 +278,126 @@ function assertionSummary(exec) {
   return checks
 }
 
-export function gateSubtask(result, expectedId, acceptance, cfg, baseDir) {
+// v119 — command acceptance runs the USER-authored acceptance command in the
+// workspace, so the workspace itself is the fixture. This is opt-in through the
+// explicit `cmd:` marker; the sandboxed assertion runner above is unchanged.
+const CMD_OUTPUT_CAP = 600
+function tailText(value, cap = CMD_OUTPUT_CAP) {
+  const s = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return s.length > cap ? `…${s.slice(-cap)}` : s
+}
+
+export function executeCommandAcceptance(command, cwd, cfg) {
+  const cmd = String(command ?? '').trim()
+  if (!cmd) return { ran: false, reason: 'empty-command', passed: 0, total: 1 }
+  if (!cwd) throw new Error('executeCommandAcceptance: cwd is required（调用方传 store.workspaceRoot）。')
+  if (cfg && cfg.allowCodeExecution === false) {
+    return { ran: false, reason: 'execution-disabled', passed: 0, total: 1 }
+  }
+  const timeout = numCfg(cfg, 'commandAcceptanceTimeoutMs', 120000)
+  // Some hosts (notably the DSH Windows sandbox) forbid child processes with
+  // piped stdio: spawnSync then fails with EPERM before the command runs. Piped
+  // stdio is only used to surface output, so retry the SAME command with
+  // stdio:'ignore' — the exit code is still observable and the gate stays
+  // fail-closed.
+  const run = (stdio) => execSync(cmd, {
+    cwd,
+    shell: true,
+    encoding: 'utf8',
+    timeout,
+    stdio,
+    maxBuffer: 4 * 1024 * 1024,
+    windowsHide: true,
+  })
+  const pipedDenied = (err) => err?.code === 'EPERM' || /EPERM|named pipes?/i.test(String(err?.message ?? ''))
+  const fail = (err) => {
+    const status = typeof err?.status === 'number' ? err.status : null
+    const timedOut = err?.signal === 'SIGTERM' || err?.code === 'ETIMEDOUT' || /timed? ?out/i.test(String(err?.message ?? ''))
+    return {
+      ran: true,
+      command: cmd,
+      exitCode: status == null ? (timedOut ? 'timeout' : 1) : status,
+      passed: 0,
+      total: 1,
+      actual: tailText(err?.stderr) || tailText(err?.stdout) || tailText(err?.message ?? err) || 'exit non-zero',
+    }
+  }
+  try {
+    const stdout = run(['ignore', 'pipe', 'pipe'])
+    return { ran: true, command: cmd, exitCode: 0, passed: 1, total: 1, actual: tailText(stdout) || 'exit 0' }
+  } catch (err) {
+    if (typeof err?.status !== 'number' && pipedDenied(err)) {
+      try {
+        run('ignore')
+        return { ran: true, command: cmd, exitCode: 0, passed: 1, total: 1, actual: 'exit 0（宿主禁止管道输出，已用 exit code 判定）' }
+      } catch (err2) {
+        return fail(err2)
+      }
+    }
+    return fail(err)
+  }
+}
+
+// One shared decision function: assertion > command > semantic proxy. Keeping
+// the three modes in one place means gateSubtask and gateTask can never drift.
+function evaluateAcceptance(code, acceptance, cfg, baseDir, workspaceRoot, opts = {}) {
+  const checks = []
+  let ok = true
+  let score = 0
+
+  const assertions = extractAssertions(acceptance)
+  if (assertions.length > 0) {
+    const exec = executeAcceptance(code, acceptance, baseDir, cfg)
+    if (exec === null) {
+      // Defensive: assertions were parsed, so executeAcceptance should not
+      // return null. If it somehow does, fail closed instead of scoring prose.
+      checks.push({ name: 'execution-assertions (not-run)', pass: false })
+      return { ok: false, score: 0, checks }
+    }
+    if (exec.ran) {
+      checks.push(...assertionSummary(exec))
+      score = exec.total > 0 ? exec.passed / exec.total : 0
+      const qOk = exec.total > 0 && exec.passed === exec.total
+      checks.push({ name: `execution-assertions ${exec.passed}/${exec.total}`, pass: qOk, score: Number(score.toFixed(3)) })
+      if (!qOk) ok = false
+    } else {
+      checks.push({ name: `execution-assertions (${exec.reason ?? 'not-run'})`, pass: false })
+      ok = false
+    }
+    return { ok, score: Number(score.toFixed(3)), checks }
+  }
+
+  const command = extractCommand(acceptance)
+  if (command) {
+    // A multi-subtask module may defer its (module-level) command to the task
+    // gate: running a full sync check after the first of N files exists would
+    // fail for the wrong reason. The deferred subtask is still not "verified";
+    // the task gate is the real integration gate and must pass before a task
+    // can become done.
+    if (opts.deferCommand === true) {
+      checks.push({ name: 'command-acceptance (deferred to task gate)', pass: true, deferred: true })
+      return { ok: true, score: 0, checks, deferred: true }
+    }
+    const cmd = executeCommandAcceptance(command, workspaceRoot || baseDir, cfg)
+    if (!cmd.ran) {
+      checks.push({ name: `command-acceptance (${cmd.reason ?? 'not-run'})`, pass: false })
+      return { ok: false, score: 0, checks }
+    }
+    const pass = cmd.exitCode === 0
+    checks.push({ name: `command-acceptance exit ${cmd.exitCode}`, pass, actual: cmd.actual })
+    return { ok: pass, score: pass ? 1 : 0, checks }
+  }
+
+  score = semanticScore(code, acceptance)
+  const semOk = score >= cfg.semanticGateThreshold
+  const capNote = Number(cfg.semanticGateThreshold) > SEMANTIC_SCORE_CAP
+    ? `（关键词分上限 ${SEMANTIC_SCORE_CAP}；请改写为断言或 cmd:）`
+    : ''
+  checks.push({ name: `semantic-score>=${cfg.semanticGateThreshold}${capNote}`, pass: semOk, score: Number(score.toFixed(3)) })
+  return { ok: semOk, score: Number(score.toFixed(3)), checks }
+}
+
+export function gateSubtask(result, expectedId, acceptance, cfg, baseDir, workspaceRoot, opts = {}) {
   const checks = []
   let ok = true
 
@@ -262,33 +424,22 @@ export function gateSubtask(result, expectedId, acceptance, cfg, baseDir) {
   checks.push({ name: 'status-in-enum', pass: statusOk })
   if (!statusOk) ok = false
 
-  // v104 — execution-first and fail-closed: if the acceptance contains
-  // assertions the runner decides, and every assertion must pass. A blocked or
-  // crashed run is a failure, not a keyword-score opportunity.
+  // v104 — execution-first and fail-closed: assertions decide when present; a
+  // blocked or crashed run is a failure, never a keyword-score opportunity.
+  // v119 — command acceptance covers file/build tasks; semantic remains the
+  // explicit weak fallback (and is unreachable above the exported cap).
   let score = 0
   if (codeOk) {
-    const exec = executeAcceptance(result.code, acceptance, baseDir, cfg)
-    if (exec === null) {
-      score = semanticScore(result.code, acceptance)
-      const semOk = score >= cfg.semanticGateThreshold
-      checks.push({ name: `semantic-score>=${cfg.semanticGateThreshold}`, pass: semOk, score: Number(score.toFixed(3)) })
-      if (!semOk) ok = false
-    } else if (exec.ran) {
-      checks.push(...assertionSummary(exec))
-      score = exec.total > 0 ? exec.passed / exec.total : 0
-      const qOk = exec.total > 0 && exec.passed === exec.total
-      checks.push({ name: `execution-assertions ${exec.passed}/${exec.total}`, pass: qOk, score: Number(score.toFixed(3)) })
-      if (!qOk) ok = false
-    } else {
-      checks.push({ name: `execution-assertions (${exec.reason ?? 'not-run'})`, pass: false })
-      ok = false
-    }
+    const ev = evaluateAcceptance(result.code, acceptance, cfg, baseDir, workspaceRoot, opts)
+    checks.push(...ev.checks)
+    score = ev.score
+    if (!ev.ok) ok = false
   }
 
   return { ok, score: Number(score.toFixed(3)), checks }
 }
 
-export function gateTask(task, subtaskRecords, cfg, fileCode, baseDir) {
+export function gateTask(task, subtaskRecords, cfg, fileCode, baseDir, workspaceRoot) {
   const checks = []
   let ok = true
   const records = Array.isArray(subtaskRecords) ? subtaskRecords : []
@@ -308,23 +459,10 @@ export function gateTask(task, subtaskRecords, cfg, fileCode, baseDir) {
   if (!codeOk) ok = false
 
   if (codeOk) {
-    const exec = executeAcceptance(code, task.acceptance, baseDir, cfg)
-    if (exec === null) {
-      const score = semanticScore(code, task.acceptance)
-      const semOk = score >= cfg.semanticGateThreshold
-      checks.push({ name: `semantic-score>=${cfg.semanticGateThreshold}`, pass: semOk, score: Number(score.toFixed(3)) })
-      if (!semOk) ok = false
-      return { ok, score: Number(score.toFixed(3)), checks }
-    }
-    if (exec.ran) {
-      checks.push(...assertionSummary(exec))
-      const qOk = exec.total > 0 && exec.passed === exec.total
-      checks.push({ name: `execution-assertions ${exec.passed}/${exec.total}`, pass: qOk })
-      if (!qOk) ok = false
-      return { ok, score: Number((exec.total > 0 ? exec.passed / exec.total : 0).toFixed(3)), checks }
-    }
-    checks.push({ name: `execution-assertions (${exec.reason ?? 'not-run'})`, pass: false })
-    ok = false
+    const ev = evaluateAcceptance(code, task.acceptance, cfg, baseDir, workspaceRoot, {})
+    checks.push(...ev.checks)
+    if (!ev.ok) ok = false
+    return { ok, score: ev.score, checks }
   }
 
   return { ok, score: 0, checks }

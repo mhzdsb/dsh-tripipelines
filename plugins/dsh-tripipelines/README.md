@@ -89,7 +89,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 | **逐任务验收标准** | 每级下发的任务由**下发方现场生成**各自的验收标准，质量门按它打分 |
 | **失败有界 + cannot-do** | L3 干不了明确回 `cannot-do`；输出错了重试 `maxLevel3Retries` 次，超限 L2 接管 |
 | **批量 L3 执行** | `pipeline_execute_batch` 一次提交 N 个子任务，内部串行、一次返回，省 N 倍推理 token |
-| **质量门跑代码断言** | 验收里有 `函数(参数)==期望` 就真跑（JS/TS 用 node、Python 用受控子进程）；**全部断言通过才算过**，没有断言才回退关键词分 |
+| **质量门跑代码断言** | 验收里有 `函数(参数)==期望` 就真跑（JS/TS 用 node、Python 用受控子进程）；**全部断言通过才算过**。文件类任务用 `cmd: <命令>` 在工作区做集成验收（v119，退出码判定）。没有断言/命令才回退关键词分 |
 | **按异常汇报 + 禁止轮询** | L1/L2 不轮询看板，靠 push 汇报，大幅省 token |
 | **GUI 看板（v92/v94）** | Web UI 侧栏内嵌一张与「余额」卡同款的小卡：run 状态 / 里程碑 / 每层甜点区（绿黄红）/ 活跃 L2 与模型 / token 预算，模型看不到，用户随时看得见 |
 | **每 L2 独立工作目录（v92）** | `pipeline_spawn_module_lead` 传 `scopeDir` → subagent 真实 `cwd` 隔离，多个 lead 不踩文件 |
@@ -98,8 +98,8 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 | **预算护栏** | `maxTotalTokensPerRun` / `maxDurationPerRun` / `maxFilesPerRun`（0=不限） |
 | **一次性激活 Gate** | 新工作区只问一次，答案按工作区记忆，之后不再打扰 |
 | **健康自检** | `/pipe-selftest` 检查 subagents API、llm 服务、L3 引擎；启动时也会非阻塞 ping |
-| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起 12 套 smoke 回归 |
-| **四阶段工作流** | 引导开机 → 需求访谈 → 适配性评估 → 自适应调度 |
+| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起 18 套 smoke 回归 |
+| **四阶段工作流** | 开工定模型（v121）→ 需求访谈 → 适配性评估 → 自适应调度 |
 
 > 完整功能清单见 [CHANGELOG.md](CHANGELOG.md)，架构细节见 [docs/agent-lifecycle-design.md](docs/agent-lifecycle-design.md)。
 
@@ -142,7 +142,8 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 |---|---|---|
 | `level1Model` | `deepseek-pro` | 一级模型（仅甜点区档案查询，不切换实际 L1） |
 | `level2Provider` / `level2Model` | `deepseek-official` / `deepseek-flash` | 二级模型 |
-| `level3Model` / `level3Endpoint` | 由配置指定 / **空**（必须显式配置） | 三级本地引擎（OpenAI 协议）；`level3Provider` 默认 `ninfer-local`，用 `/pipe-config level3Endpoint http://127.0.0.1:8080/v1` 指向本机引擎 |
+| `level3Model` / `level3Provider` / `level3Endpoint` | 由配置指定 / `ninfer-local` / **空**（必须显式配置） | 三级模型；`executor` 模式走该端点的 OpenAI 协议（`/pipe-config level3Endpoint http://127.0.0.1:8080/v1`），`agent` 模式走 provider 子代理 |
+| `level3Mode` | `auto` | L3 执行模式（v123）：`auto` 按模型来源判断（引擎模型→executor，云端→agent）/ `executor`=本地端点一次性执行 / `agent`=DSH 子代理（云端模型必用） |
 | `level3Engine` | `auto` | 引擎提示（auto/ollama/vllm/llamacpp/openai-compat/other） |
 | `maxCodeLines` | `100` | L3 交付代码行数上限 |
 | `maxLevel3Retries` | `5` | L3 失败最大重试，超限 L2 接管 |
@@ -158,9 +159,10 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 | `autoTuneSweetSpot` | `true` | 换模型时自动联动甜点区 |
 | `devDir` | `dev` | 开发过程文档目录（与生产文件分离） |
 | `level3TimeoutMs` | `900000` | 三级子任务超时（=15 分钟） |
+| `commandAcceptanceTimeoutMs` | `120000` | `cmd:` 验收命令超时（毫秒，v119） |
 | `level3InputBudget` | `500` | 三级子任务输入 token 上限（超过自动压缩） |
 | `level3MaxOutputTokens` | `4096` | 三级输出 token 上限 |
-| `semanticGateThreshold` | `0.7` | 质量门阈值 |
+| `semanticGateThreshold` | `0.7` | 质量门阈值；仅关键词分时上限 0.5，`pipeline_plan` 会拒绝「阈值 > 0.5 且验收无法执行」的计划（v119） |
 | `mode` | `auto` | `auto`=按项目评估 / `on`=强制三级 / `off`=单 agent |
 | `activationGate` | `true` | 新工作区一次性激活询问 |
 | `maxTotalTokensPerRun` | `500000` | 单 run token 预算上限（0=不限） |
@@ -169,12 +171,19 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 
 **配置分层**：`DEFAULT_CONFIG` < 传入 config < 全局 `~/.dsh/pipeline/config.json` < 项目级 `<devDir>/pipeline-project.json`。不同 `devDir` 互不污染。
 
+**开工定模型（v121）**：每个项目第一次进入时，L1 先调 `pipeline_model_setup`，把本机全部二级/三级模型和可复制的 `/pipe-config ...` 命令贴出来并问一次；不选则落默认（L2 `deepseek-flash`，L3 本机 `/models` 第 1 个）。选择记在 `<stateDir>/model-setup.json`，同一项目不再追问；`pipeline_lock_requirements` 在未定模型时返回 `modelSetupHint`。
+
+**跨 provider 选模型（v122/v123）**：模型 id 只在提供它的 provider 下有效（例如千问 Token Plan 的 `qwen3.7-plus` 属于 `qwen-token-plan-cn`）。现在 `/pipe-config level2Model <id>` 直接写模型名即可：命令执行后会自动配套 provider 并输出 `🔧 已自动配套 level2Provider=…`；清单也会按 provider 分组给出可复制的 provider 行。派发前还有一次校验兜底（`providerNote`），显式传 `provider` 的调用不会被改写，只会警告。
+
+**云端 L3 / 模式（v123）**：L3 不一定是本地引擎。`/pipe-config level3Model <id> mode=agent` 会把该模型作为 DSH 子代理运行（走它所属 provider，不需要 `level3Endpoint`）；`mode=executor` 保持本地 OpenAI 兼容端点一次性执行；`mode=auto`（默认）按模型来源判断——引擎模型 → executor，云端模型 → agent。`pipeline_model_setup` 的 `apply:'custom'` 遇到云端 L3 会自动切成 agent 并配套 provider。`level3Mode=agent` 时 `execute_local/batch` 会被拒绝，`executor` 时 `spawn_local_executor` 会被拒绝，避免把云端模型 id 发到错误端点。
+
 **甜点区自适应**：换 `level1Model`/`level2Model` 时按 `MODEL_PROFILES` 档案（窗口 × 比例）自动重算预算；不在档案里则提示手动设。
 
 ## 使用
 
 新开一个会话，直接描述你要做的东西（几句话，不用拆模块），主 agent 会自己走四阶段。
 
+- **开工定模型（v121）**：每个新项目，L1 会先调 `pipeline_model_setup`，贴出本机全部二级/三级模型与可复制的 `/pipe-config ...` 行；不选就用默认（L2 `deepseek-flash`，L3 本机 `/models` 第 1 个）。
 - 不需要三级：说「不用三级模式」或 `/pipe-config mode off`。
 - 看状态：`/pipe-config` 或（L1）`pipeline_status`。
 - 暂停/继续：`/pipe-stop` / `/pipe-resume`；彻底关掉：`/pipe-off`。
@@ -185,8 +194,9 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 
 | 工具 | 层级 | 作用 |
 |---|---|---|
+| `pipeline_model_setup` | L1 | 开工先定模型：列出本机全部 L2/L3 模型 + 可复制命令，落默认或自定义（v121） |
 | `pipeline_lock_requirements` | L1 | 锁定需求，开 run（可带 `activation`） |
-| `pipeline_plan` | L1 | 记录 TaskPlan（依赖 DAG + 环检测 + 里程碑声明） |
+| `pipeline_plan` | L1 | 记录 TaskPlan（依赖 DAG + 环检测 + 里程碑声明；验收必须是断言 / `cmd:` / 阈值≤0.5 的关键词分，v119） |
 | `pipeline_spawn_module_lead` | L1→L2 | 生成长活模块负责人（默认配置的模型；可传 `scopeDir` 独立工作目录、`provider`/`model` 单独指定模型） |
 | `pipeline_send_to_lead` | L1↔L2 | 复用二级发后续任务 |
 | `pipeline_drain_leads` | L1 | 里程碑重建后释放旧二级 |
@@ -199,7 +209,7 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 | `pipeline_execute_local` | L2→L3 | 同步派发单个 L3 子任务 |
 | `pipeline_execute_batch` | L2→L3 | 一次提交 N 个子任务，内部串行一次返回（省推理 token） |
 | `pipeline_spawn_local_executor` | L2→L3 | agent 式派发 L3（可选重路径） |
-| `pipeline_review` | L2/L1 | 质量门（跑代码断言优先 + JSON + DoD；可传 `filePath`） |
+| `pipeline_review` | L2/L1 | 质量门（断言 > `cmd:` > 关键词分；JSON + DoD；可传 `filePath`） |
 | `pipeline_register_output` | L2 | L2 接管直写盘后回填看板 |
 | `pipeline_scan` | L1 | 扫仓库生成知识库（index.md 骨架 + map.json 符号表 + 每模块一页） |
 | `pipeline_ledger` | L1 | 从交接文档抽「关键决策/结论」候选，标出缺失字段待分类 |
@@ -231,7 +241,7 @@ pipeline_ledger()            # 从交接文档抽决策候选
 /pipe-research 下一步投哪条路径
 ```
 
-它会在 `<工作区>/.dsh/pipeline/knowledge/research/<日期>-<议题>.md` 生成一份 7 步研讨骨架：
+它会在 `<工作区>/.dsh/pipeline/knowledge/research/<日期>-<议题>.md` 生成一份 7 步研讨骨架，**并在同一轮把第 1 步（立项）的问题发到对话里**（v120；v119 及以前只落一份空骨架给用户自己填）：
 
 1. **立项** —— 问题、成功判据（错了能被提前暴露）、预算
 2. **证据** —— 每条带 `file:line` 或台账 `#n` 指针
@@ -243,7 +253,7 @@ pipeline_ledger()            # 从交接文档抽决策候选
 
 模板自带三条防呆：无数值的理由删掉或补数字；带指针证据不足 3 条先去 `pipeline_recall`；没回答「错了会怎么暴露」不能当决策依据。研讨结论回写 `decisions.md`（或 checkpoint 的决策节），**v117 起 `pipeline_recall` 默认也会检索 `research/*.md`**——下次同一议题不用从头吵。
 
-> 研讨层目前是手动触发：先跑 2~3 次，确认真能减少返工，再谈自动阈值。
+> v120 起 `/pipe-research` 不再只是记录：命令会唤醒当前 agent，先问第 1 步的 1-2 个问题，答完再逐节续写骨架。研讨的结论仍要回写 `decisions.md`（或 checkpoint 的决策节）。
 
 ### 隔离与检索语义（v118）
 
@@ -274,8 +284,9 @@ pipeline_ledger()            # 从交接文档抽决策候选
 1. **桌面端不能加载非内置依赖**：可视化设置页需要 `schemastery`，用 `/pipe-config` 命令代替。
 2. **`deepseek-v4.1-flash` 不存在**，正确 id 是 `deepseek-flash`。
 3. **Agent Teams teammate 不能指定模型**（继承父 agent 的模型），所以二级长活用 **continuable subagent**。
-4. 质量门是「执行断言优先 + 语义关键词兜底」，断言 **fail-closed**：没有可用 runner、代码被静态安全门拦下、或任一断言失败，都判失败，不会回落关键词分。语义分本身封顶 0.5，默认阈值 0.7 下无法单独过门。
-5. **JS/TS 与 Python 都支持**：JS 走 `node` 子进程，Python 走 AST 静态安全门 + 子进程；宿主机执行可通过 `allowCodeExecution=false` 整体关闭（关闭后含断言的验收一律不通过）。
+4. 质量门是「断言 > `cmd:` 命令 > 关键词分」，断言 **fail-closed**：没有可用 runner、代码被静态安全门拦下、或任一断言失败，都判失败，不会回落关键词分。语义分本身封顶 0.5，**默认阈值 0.7 下无法单独过门**，所以 `pipeline_plan` 会在计划期直接拒绝这种验收（v119），而不是等 review 时判死。
+5. **JS/TS 与 Python 都支持**：JS 走 `node` 子进程，Python 走 AST 静态安全门 + 子进程；宿主机执行可通过 `allowCodeExecution=false` 整体关闭（关闭后断言与 `cmd:` 验收一律不通过）。`cmd:` 是集成验收，在工作区根目录执行（`pytest` / 同步检查脚本等），与禁止 import/IO 的断言沙箱分离（v119）。
+6. **文件类任务的正确写法**：验收写成 `cmd: python dev/check_sync.py`（脚本自己读文件、比对、`sys.exit(非0)`），而不是让模型代码 `import pathlib` 去过断言沙箱。
 
 ## 目录结构
 
@@ -309,7 +320,8 @@ dsh-tripipelines/
 └── CHANGELOG.md                          # 版本日志
 ```
 
-`pnpm test`（在 `plugins/dsh-tripipelines/` 下）一键跑 12 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 48 断言（含看板跟随当前工作区、切换器与折叠栏同步）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）。
+`pnpm test`（在 `plugins/dsh-tripipelines/` 下）一键跑 18 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 48 断言（含看板跟随当前工作区、切换器与折叠栏同步）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）、v118 隔离 45 断言、v119 质量门出口 41 断言（register→review / 计划期验收校验 / `cmd:` 文件任务 / 里程碑阻塞项 / 兜底切分 / lock 归档 / 计数说明 / `_scratch` 跳过）、v120 研讨移交 20 断言（`/pipe-research` 唤醒 agent 问第 1 步 / 无 `followup` 宿主降级 / 空议题兜底）、v121 开工定模型 43 断言（L2/L3 发现与排序回退 / 可复制命令 / 默认落盘 / lock hint / 项目记录 / custom 校验）、v122 跨 provider 配对 26 断言（清单分组与 provider 行 / 裸模型命令自配对 / custom 自动配套 / spawn 自动纠正 / 显式 provider 尊重 / selftest degraded）、v123 L3 模式 23 断言（`mode=agent` 落盘与配套 / agent 模式 selftest / execute_local 拒绝 / executor 拒绝 spawn / auto 判引擎模型 / 裸 agent 简写 / 云端 L3 自动 agent / L2 上的 mode 被忽略）。
+
 
 ---
 

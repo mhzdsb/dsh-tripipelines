@@ -216,7 +216,7 @@ try {
   check('mode=off keeps scan/recall', plugin.shouldRegisterTool('pipeline_scan', offCfg) && plugin.shouldRegisterTool('pipeline_recall', offCfg))
   check('mode=off drops spawn_module_lead', plugin.shouldRegisterTool('pipeline_spawn_module_lead', offCfg) === false)
   check('mode=off drops execute_local', plugin.shouldRegisterTool('pipeline_execute_local', offCfg) === false)
-  check('mode=off keeps 6 of 19 tools', plugin.OFF_MODE_TOOLS.size === 6)
+  check('mode=off keeps 6 of 20 tools', plugin.OFF_MODE_TOOLS.size === 6)
   const registered = []
   const sections = []
   const fakeCtx = {
@@ -228,7 +228,7 @@ try {
   }
   plugin.apply(fakeCtx, { ...cfg, mode: 'auto' })
   const fullNames = [...registered]
-  check('mode=auto registers 19 tools', fullNames.length === 19, `${fullNames.length}`)
+  check('mode=auto registers 20 tools', fullNames.length === 20, `${fullNames.length}`)
   check('mode=auto registers spawn_module_lead', fullNames.includes('pipeline_spawn_module_lead'))
   check('mode=auto registers the full protocol section', sections.length === 1 && /pipeline_spawn_module_lead/.test(sections[0].text))
 } finally {

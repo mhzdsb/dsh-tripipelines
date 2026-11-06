@@ -414,3 +414,52 @@ export function saveActivation(stateDir, choice) {
     // best-effort
   }
 }
+
+// v121 — per-project model onboarding record. Scoped to the workspace (not the
+// global config) so a project is asked once, while the NEXT project still gets
+// the prompt. The chosen ids also let a returning session report what was picked
+// even if the global config changed in the meantime.
+export function modelSetupPath(stateDir) {
+  return join(stateDir, 'model-setup.json')
+}
+export function loadModelSetup(stateDir) {
+  try {
+    const v = JSON.parse(readFileSync(modelSetupPath(stateDir), 'utf8'))
+    return {
+      confirmed: v?.confirmed === true,
+      mode: typeof v?.mode === 'string' ? v.mode : null,
+      level2Model: typeof v?.level2Model === 'string' ? v.level2Model : null,
+      level2Provider: typeof v?.level2Provider === 'string' ? v.level2Provider : null,
+      level3Model: typeof v?.level3Model === 'string' ? v.level3Model : null,
+      level3Provider: typeof v?.level3Provider === 'string' ? v.level3Provider : null,
+      level3Mode: typeof v?.level3Mode === 'string' ? v.level3Mode : null,
+      at: typeof v?.at === 'string' ? v.at : null,
+    }
+  } catch {
+    return { confirmed: false, mode: null, level2Model: null, level2Provider: null, level3Model: null, level3Provider: null, level3Mode: null, at: null }
+  }
+}
+export function saveModelSetup(stateDir, choice = {}) {
+  try {
+    writeFileSync(
+      modelSetupPath(stateDir),
+      JSON.stringify(
+        {
+          confirmed: true,
+          mode: typeof choice.mode === 'string' ? choice.mode : null,
+          level2Model: choice.level2Model ?? null,
+          level2Provider: choice.level2Provider ?? null,
+          level3Model: choice.level3Model ?? null,
+          level3Provider: choice.level3Provider ?? null,
+          level3Mode: choice.level3Mode ?? null,
+          at: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+  } catch {
+    // best-effort
+  }
+}

@@ -19,6 +19,9 @@ import { execFileSync } from 'node:child_process'
 
 const SKIP_DIRS = new Set([
   '.git', '.venv', 'venv', 'env', 'node_modules', '__pycache__', '.pytest_cache',
+  // v119 — scratch dirs are working state, not product code; scanning them made
+  // pipeline_scan report 17 bogus "added" files after every debugging session.
+  '_scratch',
   '.mypy_cache', '.ruff_cache', 'dist', 'build', '.next', '.idea', '.vscode',
   'coverage', 'htmlcov', '.tox', '.m17_stage', '.dsh',
 ])
@@ -382,7 +385,7 @@ function filesUnder(dir, skipDirs = new Set(), acc = []) {
   for (const e of ents) {
     const full = join(dir, e.name)
     if (e.isDirectory()) {
-      if (['__pycache__', 'node_modules', 'dist'].includes(e.name)) continue
+      if (['__pycache__', 'node_modules', 'dist', '_scratch'].includes(e.name)) continue
       if (skipDirs.has(e.name)) continue
       filesUnder(full, skipDirs, acc)
       continue

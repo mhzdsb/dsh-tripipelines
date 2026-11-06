@@ -15,6 +15,12 @@ curl http://127.0.0.1:8080/v1/models
 
 如果引擎端口/模型名不是这个值，装好后用 `/pipe-config level3Endpoint <你的地址>` 与 `/pipe-config level3Model <模型 id>` 改。
 
+> v121 起，每个项目开工时 L1 会先调 `pipeline_model_setup`，贴出本机全部二级/三级模型与可复制的 `/pipe-config ...` 行；不选就用默认（L2 `deepseek-flash`，L3 本机 `/models` 第 1 个）。
+>
+> v122 起，模型清单按 provider 分组；选别家 provider 的模型（如千问 Token Plan 的 `qwen3.7-plus`）时，清单会在组前给出配套的 `/pipe-config level2Provider <id>`。漏发也不会发错 API：派发前会自动纠正到正确的 provider，并在 `providerNote` 里说明；`pipeline_selftest` 也会报 `L2 model/provider` 不匹配。
+>
+> v123 起更省事：`/pipe-config level2Model <id>` / `/pipe-config level3Model <id>` 只写模型名，命令会自动配套 provider。L3 也能用云端模型：`/pipe-config level3Model qwen3.7-plus mode=agent`（作为 DSH 子代理运行，不需要 `level3Endpoint`）；`mode=executor` 保持本地端点一次性执行，默认 `mode=auto` 按模型来源判断。
+
 ## 第 1 步：装插件（1 分钟）
 
 二选一（`dsh-tripipelines-vNN` 是发布快照目录，`NN` 为迭代号）：

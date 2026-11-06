@@ -148,7 +148,7 @@ try {
   apply(h1.ctx, { mode: 'auto' })
 
   section('registration')
-  check('19 tools registered', h1.tools.size === 19, `got ${h1.tools.size}`)
+  check('20 tools registered', h1.tools.size === 20, `got ${h1.tools.size}`)
   check('7 commands registered', h1.commands.size === 7, `got ${h1.commands.size}`)
   check('one board route registered', routes.length === 1, `got ${routes.length}`)
 

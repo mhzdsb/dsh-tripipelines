@@ -4,10 +4,11 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { resolve, dirname, isAbsolute, sep } from 'node:path'
 import { createHash } from 'node:crypto'
-import { text, safeParseJson, splitIntoChunks, estimateTokens, compressText, normalizeStatus, contentText, numCfg, LEVEL2_NAMES, jsonOutput } from '../util.js'
+import { text, safeParseJson, splitIntoChunks, estimateTokens, compressText, normalizeStatus, contentText, numCfg, LEVEL2_NAMES, jsonOutput, SEMANTIC_SCORE_CAP } from '../util.js'
 import { buildL3ExecutorPrompt } from '../prompts.js'
-import { gateSubtask, gateTask } from '../gates.js'
+import { gateSubtask, gateTask, acceptanceMode } from '../gates.js'
 import { addRunUsage } from '../store.js'
+import { resolveModelProvider } from '../models.js'
 
 // v103 — resolve tool-supplied paths against the calling workspace, not the
 // daemon process cwd (which is the profile directory).
@@ -153,12 +154,23 @@ export function makeDecomposeTool(ctx, cfg, r) {
       }
       const created = []
       let n = task.subtaskIds.length
+      // v119 — per-subtask acceptance is only usable when the gate can actually
+      // decide it. A prose acceptance above the semantic cap would dead-end the
+      // subtask review (0.5 < 0.7), so fall back to the module acceptance that
+      // pipeline_plan already validated.
+      const threshold = Number(cfg.semanticGateThreshold ?? 0.7)
+      const usableAcceptance = (acc) => {
+        const s = typeof acc === 'string' ? acc.trim() : ''
+        if (!s) return false
+        return acceptanceMode(s) !== 'semantic' || threshold <= SEMANTIC_SCORE_CAP
+      }
       for (const chunk of chunks) {
         const item = typeof chunk === 'string' ? { desc: chunk, acceptance: null } : chunk
         const sid = `${task.id}-s${++n}`
         // v111 (B4) — each subtask carries its OWN acceptance; the module
-        // acceptance is only the fallback for a deterministic split.
-        const acceptance = item.acceptance ?? task.acceptance
+        // acceptance is the fallback for a deterministic split, and for an
+        // acceptance the gate could never pass (v119).
+        const acceptance = usableAcceptance(item.acceptance) ? item.acceptance.trim() : task.acceptance
         r.store.subtasks.set(sid, {
           id: sid,
           parent: task.id,
@@ -198,7 +210,7 @@ export function makeExecuteLocalTool(ctx, cfg, r) {
   return {
     name: 'pipeline_execute_local',
     description:
-      'Run ONE tiny subtask on the local L3 engine (text in, JSON out). With filePath the plugin writes the file and returns path/lines/sha8 instead of the code.',
+      'Run ONE tiny subtask on the L3 engine over HTTP (text in, JSON out). Use when level3Mode=auto/executor; level3Mode=agent rejects it (use pipeline_spawn_local_executor). With filePath the plugin writes the file and returns path/lines/sha8 instead of the code.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -258,6 +270,12 @@ function makeSubtask(spec, fallbackId) {
 // Execute ONE Level-3 subtask: budget guard -> compressed prompt -> OpenAI call ->
 // JSON parse -> retry / escalation / bookkeeping. Shared by local + batch.
 async function executeOneL3Task(subtask, cfg, r, exec) {
+  if (cfg.level3Mode === 'agent') {
+    subtask.state = 'failed'
+    subtask.reason = 'L3 当前是 agent 模式（level3Mode=agent）：改用 pipeline_spawn_local_executor；要切回一次性执行器就 /pipe-config level3Mode executor'
+    r.record('level3_local', 'failed', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.reason, subtask.acceptance)
+    return { ok: false, blocked: true, subtaskId: subtask.id, reason: subtask.reason }
+  }
   if (!String(cfg.level3Endpoint ?? '').trim()) {
     subtask.state = 'failed'
     subtask.reason = 'level3Endpoint 未配置（/pipe-config level3Endpoint http://127.0.0.1:8080/v1）'
@@ -531,6 +549,10 @@ export function makeReviewTool(ctx, cfg, r) {
         const explicitAbs = args.filePath ? wsPath(r, args.filePath) : null
         const recordedAbs = !explicitAbs && s.filePath ? fileAbs(r, s.filePath) : null
         const abs = explicitAbs ?? recordedAbs
+        // v119 — a multi-subtask module defers its command acceptance to the
+        // task gate: a full integration check cannot pass after the first file.
+        const parentTask = r.store.tasks.get(s.parent)
+        const deferCommand = (parentTask?.subtaskIds?.length ?? 0) > 1
         let gate
         if (abs) {
           let readErr = null
@@ -547,11 +569,11 @@ export function makeReviewTool(ctx, cfg, r) {
             s.code = code
             s.filePath = args.filePath ? String(args.filePath) : s.filePath
             s.fileSha8 = sha8(code)
-            gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
+            gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir, r.store.workspaceRoot, { deferCommand })
             gate.checks = [{ name: 'file-on-disk', pass: true }, ...gate.checks]
           }
         } else {
-          gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir)
+          gate = gateSubtask({ subtask_id: s.l3SubtaskId ?? null, code, status: s.status }, s.id, s.acceptance, cfg, r.store.stateDir, r.store.workspaceRoot, { deferCommand })
         }
         if (gate.ok) {
           s.state = 'done'
@@ -605,7 +627,7 @@ export function makeReviewTool(ctx, cfg, r) {
           r.record(t.assignee, 'failed', 'review_result', 'level1_main', t.id, t.desc, t.reason, t.acceptance)
           return { level: 2, id: t.id, ok: false, blocked: true, reason: t.reason, state: 'failed' }
         }
-        const gate = gateTask(t, subs, cfg, fileCode, r.store.stateDir)
+        const gate = gateTask(t, subs, cfg, fileCode, r.store.stateDir, r.store.workspaceRoot)
         if (gate.ok) {
           if (failedSub) {
             failedSub.state = 'done'
@@ -629,7 +651,7 @@ export function makeReviewTool(ctx, cfg, r) {
         if (a.kind !== 'l3') throw new Error(`agent ${a.id} is ${a.kind}; only Level-3 executors can be reviewed`)
         if (a.state === 'in_progress') throw new Error(`agent ${a.id} is still in_progress`)
         const acceptance = a.acceptance ?? a.desc
-        const gate = gateSubtask({ subtask_id: a.subtaskId ?? null, code: a.code, status: a.status }, a.subtaskId ?? null, acceptance, cfg, r.store.stateDir)
+        const gate = gateSubtask({ subtask_id: a.subtaskId ?? null, code: a.code, status: a.status }, a.subtaskId ?? null, acceptance, cfg, r.store.stateDir, r.store.workspaceRoot)
         a.state = gate.ok ? 'done' : 'failed'
         a.reason = gate.ok ? null : `quality gate failed: ${failedNames(gate)}`
         r.record(LEVEL2_NAMES[0], a.state, 'review_result', 'level1_main', a.id, a.desc, a.reason ?? 'accepted', acceptance)
@@ -646,7 +668,7 @@ export function makeReviewTool(ctx, cfg, r) {
 export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
   return {
     name: 'pipeline_spawn_local_executor',
-    description: 'Spawn a one-shot L3 executor on the local engine.',
+    description: 'Spawn a one-shot L3 executor as a DSH subagent (level3Mode=auto/agent; a cloud L3 model must use this path). level3Mode=executor rejects it.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -661,6 +683,24 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
     async execute(args, exec) {
       const subs = ctx.get ? ctx.get('subagents') : undefined
       if (!subs || typeof subs.startActivation !== 'function') throw new Error('subagents service is unavailable')
+      if (cfg.level3Mode === 'executor') {
+        throw new Error('L3 当前是 executor 模式（level3Mode=executor）：用 pipeline_execute_local / pipeline_execute_batch；要改用云端 agent 模式就 /pipe-config level3Mode agent')
+      }
+
+      // v123 — a cloud L3 must be paired with the provider that serves it; a
+      // bare level3Model from an older config would otherwise fail at the API.
+      let l3Provider = cfg.level3Provider || 'ninfer-local'
+      let pairingNote = null
+      const probe = await resolveModelProvider(ctx, { provider: l3Provider, model: cfg.level3Model })
+      if (probe.suggested) {
+        l3Provider = probe.suggested
+        pairingNote = `🔧 L3 provider 自动改用 ${l3Provider}（${cfg.level3Model} 只在它下面提供）。`
+      } else if (probe.ok === false && probe.unknown !== true && probe.skipped !== true) {
+        throw new Error(`L3 配对无效：${l3Provider} 不提供 ${cfg.level3Model}；先 /pipe-config level3Provider <pid>（或 /pipe-config level3Model <id> mode=agent 自动配对）`)
+      } else if (probe.unknown) {
+        pairingNote = `⚠️ 当前 llm 列表里没有 ${cfg.level3Model}，仍按 ${l3Provider} 派发。`
+      }
+      if (pairingNote) r.record(LEVEL2_NAMES[0], 'in_progress', 'l3_pairing', 'level3_local', null, pairingNote, null, null)
 
       // Concurrency limit: ninfer runs one generation at a time per slot, so the
       // default is 1 (configurable via maxLevel3Concurrency).
@@ -683,7 +723,7 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
           request: {
             prompt: [{ type: 'text', text: buildL3ExecutorPrompt(args.prompt, args.acceptance, cfg) }],
             parent: exec.agent,
-            agentOptions: { provider: cfg.level3Provider || 'ninfer-local', model: cfg.level3Model },
+            agentOptions: { provider: l3Provider, model: cfg.level3Model },
           },
           signal,
           delivery: 'parent',
@@ -696,7 +736,7 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
           desc: args.prompt,
           acceptance: args.acceptance ?? null,
           state: 'in_progress',
-          provider: cfg.level3Provider || 'ninfer-local',
+          provider: l3Provider,
           model: cfg.level3Model,
         })
         // v103 — L3 runs in the daemon profile cwd; bind it to this workspace.
@@ -731,11 +771,12 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
         // is not echoed back to the caller.
         const out = {
           runId: run.childId,
-          provider: cfg.level3Provider || 'ninfer-local',
+          provider: l3Provider,
           model: cfg.level3Model,
           state,
           reason,
           status,
+          ...(pairingNote ? { pairingNote } : {}),
         }
         if (args.filePath && state === 'done' && typeof code === 'string' && code.trim()) {
           try {
@@ -810,6 +851,11 @@ export function makeRegisterOutputTool(ctx, cfg, r) {
         addRunUsage(r, cfg, 0, [abs])
       }
       s.status = 'done'
+      // v119 — the L2-takeover gate expects the id the L2 is answering for, but
+      // register_output never recorded one, so pipeline_review passed
+      // `subtask_id: null` and `subtask-id-match` could NEVER pass. The subtask
+      // id IS the model-supplied id on this path.
+      s.l3SubtaskId = s.id
       s.state = 'review'
       r.record(LEVEL2_NAMES[0], 'review', 'task_result', 'level1_main', s.id, s.desc, 'done (L2 takeover)', s.acceptance)
       return { subtaskId: s.id, state: s.state, registered: true, ...(s.filePath ? { path: s.filePath } : {}) }
