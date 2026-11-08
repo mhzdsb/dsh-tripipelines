@@ -6,12 +6,16 @@
 //  3) mergeConfigLayers layering / undefined-skip / no mutation
 //  4) /pipe-config <modelKey> auto-tunes the sweet spot and explains it
 //  5) project-level pipeline-project.json overrides global, per-devDir isolated
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, mkdirSync, copyFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, mkdirSync, copyFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
-const root = new URL('../../', import.meta.url)
+// v128 — ships inside the package (test/smoke); dev/smoke keeps a twin whose ../../
+// is the REPO root, so fall back to the monorepo layout. Both copies run unchanged.
+const pkgRoot = new URL('../../', import.meta.url)
+const hasLibHere = existsSync(new URL('lib/util.js', pkgRoot))
+const root = hasLibHere ? pkgRoot : new URL('../../plugins/dsh-tripipelines/', import.meta.url)
 const tmp = mkdtempSync(join(tmpdir(), 'v82-verify-'))
 const tmpConfig = join(tmp, 'config.json').replace(/\\/g, '/')
 
@@ -156,7 +160,7 @@ check('linkage text explains old -> new', /已联动更新 level2ContextBudget: 
 cfg = freshCfg()
 res = handleConfigCommand(cfg, 'level2Model no-such-model')
 check('profile miss keeps budget', cfg.level2ContextBudget === 32000)
-check('profile miss message', /该模型无档案，甜点区未联动/.test(res.text), res.text)
+check('profile miss message', /该模型无档案且宿主未报窗口，甜点区未联动/.test(res.text), res.text)
 
 // 5c: L3 has no sweet spot since v90 (level3NumCtx removed) — change must not touch budgets
 cfg = freshCfg()

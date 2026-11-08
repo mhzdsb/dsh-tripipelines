@@ -136,7 +136,9 @@ FIRST thing in every project, before the requirement interview or any lock:
    \`alreadyConfigured: true\` — post the one-line current L1/L2/L3 summary, do not ask again.
    The choice persists like \`/pipe-config\` (global \`~/.dsh/pipeline/config.json\`); per-project
    override still possible in \`<devDir>/pipeline-project.json\`. 甜点区 follows automatically
-   (autoTuneSweetSpot on).
+   (autoTuneSweetSpot on): built-in profile first, then the host-reported context window
+   for models with no profile (v128) — never stale defaults. If neither knows the window,
+   the tool says so and the board marks the meter "未知"; you can hand-set the keys.
 
 Taking over an EXISTING repo — read knowledge, not the whole tree (v98/v99):
 - pipeline_scan once → \`.dsh/pipeline/knowledge/index.md\` + one page per code module (mechanical, 0 model tokens).

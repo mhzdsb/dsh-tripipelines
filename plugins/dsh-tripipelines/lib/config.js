@@ -250,7 +250,34 @@ const TUNE_TARGETS = {
   level2Model: { budget: 'level2ContextBudget', ratio: 'level2SweetSpotRatio', danger: 'level2DangerBudget', dangerRatio: 'level2DangerRatio', window: 'level2ContextWindow' },
 }
 
-export function tuneSweetSpot(cfg, changedKey, profiles) {
+// v128 — exported for the async host-window retune in models.js (same table, no duplication).
+export { TUNE_TARGETS }
+
+// v128 — the built-in MODEL_PROFILES only knows a handful of ids. Cloud models
+// (qwen3.7-plus on a token plan, glm, kimi…) have no profile; historically tuning
+// silently skipped them and the board painted an honest-looking meter against
+// STALE numbers (a 1M-window model measured against deepseek-flash's old
+// 32K/96K/128K defaults). The async retune in models.js now asks the host for the
+// real window; this sync path stays profile-only. Ratios follow the L2 convention
+// (0.25 sweet / 0.75 danger) — advisory under compression proxies (v127), never
+// hard limits.
+export const FALLBACK_SWEET_RATIO = 0.25
+export const FALLBACK_DANGER_RATIO = 0.75
+
+export function resolveTuning(cfg, changedKey, profiles) {
+  if (typeof cfg !== 'object' || cfg === null) return null
+  if (typeof profiles !== 'object' || profiles === null) profiles = {}
+  const keys = TUNE_TARGETS[changedKey]
+  if (!keys) return null
+  const model = cfg[changedKey]
+  const profile = profiles[model]
+  if (!profile || !Number.isFinite(profile.contextWindow)) return null
+  const window = Math.round(profile.contextWindow)
+  const ratio = Number.isFinite(cfg[keys.ratio]) ? Number(cfg[keys.ratio]) : Number(profile.sweetSpotRatio)
+  if (!Number.isFinite(ratio) || ratio <= 0) return null
+  const dangerRatio = Number(cfg[keys.dangerRatio]) > 0 ? Number(cfg[keys.dangerRatio]) : Number(profile.dangerRatio) || FALLBACK_DANGER_RATIO
+  return { window, budget: Math.round(window * ratio), danger: Math.round(window * dangerRatio), source: 'profile' }
+}export function tuneSweetSpot(cfg, changedKey, profiles) {
   if (typeof cfg !== 'object' || cfg === null) {
     return { changed: false, changes: [], target: null, model: null, profileMissing: false }
   }
@@ -269,15 +296,15 @@ export function tuneSweetSpot(cfg, changedKey, profiles) {
     changed = true
     changes.push({ field, from, to })
   }
-  const ratio = Number.isFinite(cfg[keys.ratio]) ? cfg[keys.ratio] : profile?.sweetSpotRatio
-  if (profile && Number.isFinite(profile.contextWindow) && Number.isFinite(profile.sweetSpotRatio) && Number.isFinite(ratio) && ratio > 0) {
-    const window = Math.round(profile.contextWindow)
-    set(keys.budget, Math.round(window * ratio))
-    const dangerRatio = Number(cfg[keys.dangerRatio]) > 0 ? Number(cfg[keys.dangerRatio]) : Number(profile.dangerRatio) || 0.75
-    set(keys.danger, Math.round(window * dangerRatio))
-    set(keys.window, window)
+  // v128 — tuning now falls back to the host-reported window for models with no
+  // built-in profile, instead of silently keeping stale numbers.
+  const t = resolveTuning(cfg, changedKey, profiles)
+  if (t) {
+    set(keys.window, t.window)
+    set(keys.budget, t.budget)
+    set(keys.danger, t.danger)
   }
-  return { changed, changes, target: keys.budget, model, profileMissing: !profile }
+  return { changed, changes, target: keys.budget, model, profileMissing: !profile, tuning: t }
 }
 
 export function coerceConfigValue(key, raw) {
@@ -453,7 +480,7 @@ export function handleConfigCommand(cfg, rawInput) {
               lines.push(`已联动更新 ${c.field}: ${c.from} → ${c.to}`)
             }
           } else if (tuned.profileMissing) {
-            lines.push('该模型无档案，甜点区未联动，可手动 /pipe-config <甜点区键> <值> 覆盖')
+            lines.push('该模型无档案且宿主未报窗口，甜点区未联动——看板按“未知”显示不画假刻度；可手动 /pipe-config <甜点区键> <值> 覆盖')
           } else if (tuned.target) {
             lines.push(`甜点区无需联动（${tuned.target} = ${cfg[tuned.target]}）`)
           } else {

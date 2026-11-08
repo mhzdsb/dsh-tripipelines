@@ -18,6 +18,7 @@
 │ M1 骨架与数据层 ✔已验收   M2 API 路由 ●完成待验收   M3 前端界面 ○进行中          │
 │ L1 上下文 ▓▓▓░░░ 41K/64K 测        L2 api-auth ▓▓▓▓░ 63K/32K 估 (qwen3.7-plus)   │
 │            （灰=过甜点仅提示 · 压缩代理下压力≠实际占用，v127）                     │
+│          窗口未知的模型显示「未知」，不画假刻度（v128）                             │
 │ L3 子任务 done 21 · failed 2（重试中）· token 182K / 预算 500K                   │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -100,7 +101,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines')  # 本地 / de
 | **批量 L3 执行** | `pipeline_execute_batch` 一次提交 N 个子任务，内部串行、一次返回，省 N 倍推理 token |
 | **质量门跑代码断言** | 验收里有 `函数(参数)==期望` 就真跑（JS/TS 用 node、Python 用受控子进程）；**全部断言通过才算过**。文件类任务用 `cmd: <命令>` 在工作区做集成验收（v119，退出码判定）。没有断言/命令才回退关键词分 |
 | **按异常汇报 + 禁止轮询** | L1/L2 不轮询看板，靠 push 汇报，大幅省 token |
-| **GUI 看板（v92/v94）** | Web UI 侧栏内嵌一张与「余额」卡同款的小卡：run 状态 / 里程碑 / 每层负载条（绿=甜点区内，灰=过甜点仅提示，琥珀=逼近危险线，红=过线才建议交接；装了压缩代理时压力口径偏大，颜色只作参考，v127。`测`=宿主实测、`估`=估算读数，v126）/ 活跃 L2 与模型 / token 预算，模型看不到，用户随时看得见 |
+| **GUI 看板（v92/v94）** | Web UI 侧栏内嵌一张与「余额」卡同款的小卡：run 状态 / 里程碑 / 每层负载条（绿=甜点区内，灰=过甜点仅提示，琥珀=逼近危险线，红=过线才建议交接；装了压缩代理时压力口径偏大，颜色只作参考，v127。`测`=宿主实测、`估`=估算读数，v126。窗口未知的模型显示「未知」、不画假刻度，v128）/ 活跃 L2 与模型 / token 预算，模型看不到，用户随时看得见 |
 | **每 L2 独立工作目录（v92）** | `pipeline_spawn_module_lead` 传 `scopeDir` → subagent 真实 `cwd` 隔离，多个 lead 不踩文件 |
 | **每 L2 独立模型（v94）** | 同一个 lead 可传 `provider` / `model` 覆盖默认配置——难模块换更强模型，其余照旧省钱 |
 | **里程碑状态机** | 里程碑完成 → 弹窗验收 → 落盘；未验收硬 Gate；冷启动自动恢复 |
@@ -191,7 +192,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines')  # 本地 / de
 
 **关闭三级（v124）**：`/pipe-config level3Mode off` 把插件切成两级协作——L1 照常规划、派发模块负责人、验收里程碑，L2 自己写全部代码（写完 `pipeline_register_output` 登记、`pipeline_review` 过质量门）。off 时三个 L3 派发入口（`execute_local` / `execute_batch` / `spawn_local_executor`）都会被明确拒绝并给出直写路径；改 `level3Model` 不会偷偷恢复三级，恢复要显式 `/pipe-config level3Mode auto`（或换模型时带 `mode=auto`）。开工清单与提问会同步显示「已关闭」状态并提供恢复命令。
 
-**甜点区自适应**：换 `level1Model`/`level2Model` 时按 `MODEL_PROFILES` 档案（窗口 × 比例）自动重算预算；不在档案里则提示手动设。
+**甜点区自适应（v128 修正）**：换 `level1Model`/`level2Model` 时自动重算预算——先查内置 `MODEL_PROFILES` 档案（窗口 × 比例），档案没有就向宿主查询该模型的真实上下文窗口（`llm.resolveModelInfo`）并按默认比例（甜点 25% / 危险 75%）落数；两边都查不到才提示手动设，看板同时把该条标成「窗口未知」不画假刻度。此前档案外模型（如千问 Token Plan 的 1M 窗口模型）会一直停留在 flash 的 32K/96K/128K 旧数值，v128 起不再发生。
 
 ## 使用
 
@@ -336,7 +337,7 @@ dsh-tripipelines/
 └── CHANGELOG.md                          # 版本日志（v109 及更早见 CHANGELOG-archive.md）
 ```
 
-`npm test`（克隆本包后在任意目录都能跑——测试就在 `test/smoke/` 里）一键 19 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 50 断言（含看板跟随当前工作区、切换器与折叠栏同步、默认快照省略 debug 块）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）、v118 隔离 45 断言、v119 质量门出口 41 断言（register→review / 计划期验收校验 / `cmd:` 文件任务 / 里程碑阻塞项 / 兜底切分 / lock 归档 / 计数说明 / `_scratch` 跳过）、v120 研讨移交 20 断言（`/pipe-research` 唤醒 agent 问第 1 步 / 无 `followup` 宿主降级 / 空议题兜底）、v121 开工定模型 52 断言（L2/L3 发现与排序回退 / 可复制命令 / 默认落盘 / lock hint / 项目记录 / custom 校验 / v125 双门合一提问）、v122 跨 provider 配对 26 断言（清单分组与 provider 行 / 裸模型命令自配对 / custom 自动配套 / spawn 自动纠正 / 显式 provider 尊重 / selftest degraded）、v123 L3 模式 23 断言（`mode=agent` 落盘与配套 / agent 模式 selftest / execute_local 拒绝 / executor 拒绝 spawn / auto 判引擎模型 / 裸 agent 简写 / 云端 L3 自动 agent / L2 上的 mode 被忽略）、v124 关闭三级 29 断言（off 落盘与文案 / 裸 off 简写 / off 下改模型不自愈 / mode=auto 恢复判定 / 三个执行入口逐一拒绝 / selftest 只报 disabled / setup 一步关闸与恢复 / defaults 不覆盖 off）、v125 市场硬化（看板默认快照脱敏 debug 块 / 双门合一提问 / 包内测试路径）。
+`npm test`（克隆本包后在任意目录都能跑——测试就在 `test/smoke/` 里）一键 19 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 50 断言（含看板跟随当前工作区、切换器与折叠栏同步、默认快照省略 debug 块）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）、v118 隔离 45 断言、v119 质量门出口 41 断言（register→review / 计划期验收校验 / `cmd:` 文件任务 / 里程碑阻塞项 / 兜底切分 / lock 归档 / 计数说明 / `_scratch` 跳过）、v120 研讨移交 20 断言（`/pipe-research` 唤醒 agent 问第 1 步 / 无 `followup` 宿主降级 / 空议题兜底）、v121 开工定模型 52 断言（L2/L3 发现与排序回退 / 可复制命令 / 默认落盘 / lock hint / 项目记录 / custom 校验 / v125 双门合一提问）、v122 跨 provider 配对 33 断言（清单分组与 provider 行 / 裸模型命令自配对 / custom 自动配套 / spawn 自动纠正 / 显式 provider 尊重 / selftest degraded / v128 宿主窗口重算甜点区并落盘）、v123 L3 模式 23 断言（`mode=agent` 落盘与配套 / agent 模式 selftest / execute_local 拒绝 / executor 拒绝 spawn / auto 判引擎模型 / 裸 agent 简写 / 云端 L3 自动 agent / L2 上的 mode 被忽略）、v124 关闭三级 29 断言（off 落盘与文案 / 裸 off 简写 / off 下改模型不自愈 / mode=auto 恢复判定 / 三个执行入口逐一拒绝 / selftest 只报 disabled / setup 一步关闸与恢复 / defaults 不覆盖 off）、v125 市场硬化（看板默认快照脱敏 debug 块 / 双门合一提问 / 包内测试路径）、v128 甜点区数值跟宿主窗口走（档案→宿主→未知不画假刻度）。
 
 
 ---

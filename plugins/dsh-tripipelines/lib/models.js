@@ -9,7 +9,7 @@
 // Both discoveries have a deterministic fallback (configured value + built-in
 // MODEL_PROFILES) because the local engine is often offline when a project starts.
 // Rendering is pure: one copyable `/pipe-config ...` line per model.
-import { DEFAULT_CONFIG, MODEL_PROFILES, savePersistedConfig } from './config.js'
+import { DEFAULT_CONFIG, MODEL_PROFILES, TUNE_TARGETS, FALLBACK_SWEET_RATIO, FALLBACK_DANGER_RATIO, savePersistedConfig } from './config.js'
 
 const L2_PROFILE_IDS = Object.entries(MODEL_PROFILES).filter(([, p]) => p.tier === 'l2').map(([id]) => id)
 const L3_PROFILE_IDS = Object.entries(MODEL_PROFILES).filter(([, p]) => p.tier === 'l3').map(([id]) => id)
@@ -401,6 +401,43 @@ export function buildModelSetupQuestion({ defaults, level3Mode, activation } = {
   }
 }
 
+// v128 — resolve the model's REAL context window for sweet-spot tuning. Profile hit
+// wins; otherwise ask the host (`llm.resolveModelInfo`, 2s timeout, never throws).
+export async function resolveHostTuning(ctx, cfg, tierKey, { timeoutMs = 2500 } = {}) {
+  const keys = TUNE_TARGETS[tierKey]
+  if (!keys || !cfg) return null
+  const profile = MODEL_PROFILES[cfg[tierKey]]
+  if (profile && Number.isFinite(profile.contextWindow)) {
+    const window = Math.round(profile.contextWindow)
+    // A built-in profile is exact for the models it lists; keep tuneSweetSpot's
+    // precedence (its own ratio first, then the profile's). Only an explicit
+    // sweetSpotRatio override can beat it.
+    const ratio = Number.isFinite(cfg[keys.ratio]) ? Number(cfg[keys.ratio]) : Number(profile.sweetSpotRatio)
+    if (!Number.isFinite(ratio) || ratio <= 0) return null
+    const dangerRatio = Number(cfg[keys.dangerRatio]) > 0 ? Number(cfg[keys.dangerRatio]) : Number(profile.dangerRatio) || FALLBACK_DANGER_RATIO
+    return { window, budget: Math.round(window * ratio), danger: Math.round(window * dangerRatio), source: 'profile' }
+  }
+  let llm = null
+  try {
+    llm = typeof ctx?.get === 'function' ? ctx.get('llm') : null
+  } catch {
+    llm = null
+  }
+  if (!llm || typeof llm.resolveModelInfo !== 'function') return null
+  const provider = tierKey === 'level1Model' ? null : cfg[String(tierKey).replace('Model', 'Provider')]
+  let info = null
+  try {
+    info = await withTimeout(Promise.resolve(llm.resolveModelInfo(provider, cfg[tierKey])), timeoutMs, 'resolveModelInfo')
+  } catch {
+    return null
+  }
+  const window = Number(info?.context?.contextWindow)
+  if (!Number.isFinite(window) || window <= 0) return null
+  const ratio = Number.isFinite(cfg[keys.ratio]) && cfg[keys.ratio] > 0 ? Number(cfg[keys.ratio]) : FALLBACK_SWEET_RATIO
+  const dangerRatio = Number.isFinite(cfg[keys.dangerRatio]) && cfg[keys.dangerRatio] > 0 ? Number(cfg[keys.dangerRatio]) : FALLBACK_DANGER_RATIO
+  return { window: Math.round(window), budget: Math.round(window * ratio), danger: Math.round(window * dangerRatio), source: 'host' }
+}
+
 // v123 — `/pipe-config` is a sync command with no ctx, so after a model change the
 // plugin wraps it with this best-effort follow-up: the provider (and for L3 the
 // mode) must follow the model or the API rejects it with "supported API model
@@ -424,6 +461,35 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
       notes.push(`⚠️ 无法校验 L2 provider（${probe.error}），保持 ${cfg.level2Provider}`)
     }
   }
+
+  // v128 — sweet-spot numbers must follow the REAL window of the chosen model.
+  // Built-in MODEL_PROFILES only covers a handful of ids; for anything else ask
+  // the host (`resolveModelInfo`) and retune budget/danger/window from it, so the
+  // board never paints an honest-looking meter against stale defaults (a 1M-window
+  // qwen measured against deepseek-flash's old 32K/96K/128K). resolveHostTuning
+  // reads ctx.get('llm') directly — no cfg injection needed.
+  const retune = async (tierKey, label) => {
+    if (!set.has(tierKey) || cfg.autoTuneSweetSpot !== true) return
+    const t = await resolveHostTuning(ctx, cfg, tierKey, { timeoutMs })
+    if (!t) {
+      notes.push(`ℹ️ ${label} ${cfg[tierKey]}：内置档案与宿主都查不到窗口，甜点区保持现值——看板会标注“未知”，不画假刻度`)
+      return
+    }
+    const keys = TUNE_TARGETS[tierKey]
+    const pairs = [[keys.window, t.window], [keys.budget, t.budget], [keys.danger, t.danger]]
+    let any = false
+    for (const [field, to] of pairs) {
+      if (cfg[field] !== to) {
+        notes.push(`🔧 ${field}: ${cfg[field]} → ${to}（按${t.source === 'host' ? '宿主上报' : '内置档案'}窗口 ${t.window} 重算）`)
+        cfg[field] = to
+        patch[field] = to
+        any = true
+      }
+    }
+    if (!any) notes.push(`✔ ${label} 甜点区已对齐${t.source === 'host' ? '宿主' : '档案'}窗口（${t.window}）`)
+  }
+  await retune('level1Model', 'L1')
+  await retune('level2Model', 'L2 甜点区')
 
   if (set.has('level3Model') && cfg.level3Model) {
     // `mode=auto` means "detect", so only an explicit executor/agent survives

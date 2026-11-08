@@ -2,6 +2,24 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v128 — 1.32.0（甜点区数值跟真实窗口走：档案 → 宿主上报 → 未知不画假刻度）
+
+### 变更
+- **修掉一个真 bug**：用户质疑"甜点区数值本身对不对"——对没有内置档案的模型，答案是错的。`MODEL_PROFILES` 只收录了 deepseek 系与几个本地模型；换成千问 Token Plan 的 `qwen3.7-plus`（宿主档案里窗口 1,000,000）后，甜点/危险/窗口三值一直停在 flash 的 32K/96K/128K 旧数——看板显示"过线"而实际远没用完一半窗口。根因：`tuneSweetSpot` 对档案外模型静默跳过，只印一句"该模型无档案，甜点区未联动"。
+- **三级回退链**（config.js / models.js）：`resolveTuning`（纯档案、同步路径不变）→ 新增 `resolveHostTuning(ctx,cfg,tierKey)`（档案命中即用；否则带 2.5s 超时调宿主 `llm.resolveModelInfo(provider, model).context.contextWindow`，比例取 cfg 覆盖值或默认 甜点 25% / 危险 75%，`FALLBACK_SWEET_RATIO`/`FALLBACK_DANGER_RATIO` 导出复用）→ 两边都没有返回 null。`autoPairAfterConfig` 在 L2 provider 配对之后新增 `retune('level1Model')` + `retune('level2Model')`：每个字段变化输出 `🔧 <field>: from → to（按宿主上报/内置档案窗口 W 重算）`，一致则 `✔ …已对齐…`，查不到则 `ℹ️ …看板会标注"未知"，不画假刻度`；修正值随 patch 落全局配置。`autoTuneSweetSpot=false` 时全部跳过。
+- **看板不再画假刻度**（client.js）：`meter()` 新增 `winUnknown`（无宿主窗口且已有读数）——此时百分比位显示「未知」、数值只显示当前 token、填充涂中性灰、tooltip 说明两条修复路径（换模型自动对齐 / 手动 `/pipe-config level1ContextWindow <值>`）。v127 的 advisory 配色逻辑不变，`nearDanger` 在未知窗口下强制关闭。
+- `/pipe-config` 档案缺失提示改为「该模型无档案且宿主未报窗口，甜点区未联动——看板按"未知"显示不画假刻度；可手动 …」；`TUNE_TARGETS` 导出供 models.js 复用同一套键名。
+- SKILL Phase 0 第 4 条补写回退链语义（synced 16658 chars，字节同步 PASS）。协议长度 auto=1163/off=1164，护栏内。
+
+### 测试
+- 全绿 19 套：verify-v82 82（档案缺失文案更新 + 双布局锚点）、v122 跨 provider 配对 26→33（fake llm 增 `resolveModelInfo`；裸命令自配对断言 budget 32000→250000 / danger 96000→750000 / window 128000→1000000 并落盘；新段"甜点区跟宿主窗口走"验证切回 flash 恢复 32K、再配 qwen 重新拉到 250K）、v92 看板 +3（`winUnknown` / 「未知」占位 / tooltip 含 `level1ContextWindow` 修复指引）。
+- 双拷贝教训再次生效：test/smoke 编辑后 Copy-Item → dev/smoke 并两侧各跑一遍；v122/verify-v82 头部升级为 pkgRoot/repoRoot 双布局锚点。
+
+### 文档
+- README.md / README.en.md：GUI 看板行加"窗口未知显示「未知」不画假刻度（v128）"；「甜点区自适应」段改写为三级回退链并点名旧 bug；ASCII 示意加一行 v128 注；测试清单 v122 计数 33 + v128 条目。
+
+版本 1.31.0 → 1.32.0（行为变化：档案外模型的甜点/危险/窗口值改由宿主上报窗口自动重算并落盘；查不到窗口的模型看板显示「未知」，不再沿用错误的旧默认值）。
+
 ## v127 — 1.31.0（甜点区/危险线改为"仅提示"口径：过甜点不再报警，压缩代理下不误判）
 
 ### 变更

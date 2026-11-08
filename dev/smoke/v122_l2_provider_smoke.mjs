@@ -15,9 +15,13 @@
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
+const pkgRoot = fileURLToPath(new URL('../../', import.meta.url))
+// v128 — ships inside the package (test/smoke); dev/smoke keeps a twin whose ../../
+// is the REPO root, so fall back to the monorepo layout. Both copies run unchanged.
+const repoRoot = existsSync(join(pkgRoot, 'lib')) ? pkgRoot : join(pkgRoot, 'plugins', 'dsh-tripipelines')
 let passed = 0
 let failed = 0
 function check(name, cond, detail = '') {
@@ -45,6 +49,11 @@ const MODEL_CATALOG = {
   'strata-local': ['qwen3.8-flash-next-coder-iq1_m'],
 }
 
+// v128 — host-side model metadata: qwen3.7-plus advertises a 1M window, everything
+// else stays at 128K. resolveHostTuning uses this to retune the sweet spot so the
+// board never measures a 1M model against deepseek-flash's stale 32K/96K defaults.
+const MODEL_WINDOWS = { 'qwen3.7-plus': 1000000 }
+
 function mkSession(id, cwd) {
   return {
     id,
@@ -70,6 +79,7 @@ const subagents = {
 const llm = {
   listProviders: () => Object.keys(MODEL_CATALOG).map((id) => ({ id, name: id })),
   listModels: async (provider) => (MODEL_CATALOG[provider] ?? []).map((id) => ({ id, name: id })),
+  resolveModelInfo: (provider, model) => ({ context: { contextWindow: MODEL_WINDOWS[model] ?? 128000 } }),
   async *stream() { yield { type: 'text-delta', text: '[]' } },
 }
 
@@ -97,7 +107,7 @@ function makeCtx() {
 }
 
 try {
-  cpSync(join(repoRoot, 'plugins', 'dsh-tripipelines', 'lib'), libDir, { recursive: true })
+  cpSync(join(repoRoot, 'lib'), libDir, { recursive: true })
   const cfgPath = join(libDir, 'config.js')
   writeFileSync(
     cfgPath,
@@ -139,6 +149,12 @@ try {
   section('a bare model command self-pairs the provider (v123)')
   const repaired = await configCmd('level2Model qwen3.7-plus')
   check('command reports the auto-pairing', String(repaired.text ?? '').includes('已自动配套 level2Provider=qwen-token-plan-cn'), String(repaired.text))
+  // v128 — the sweet spot follows the model's REAL window (qwen3.7-plus = 1M here),
+  // not deepseek-flash's stale 32K/96K/128K defaults.
+  check('sweet spot retuned to host window', String(repaired.text ?? '').includes('level2ContextBudget: 32000 → 250000'), String(repaired.text))
+  check('danger line retuned too', String(repaired.text ?? '').includes('level2DangerBudget: 96000 → 750000'), String(repaired.text))
+  check('window corrected to 1M', String(repaired.text ?? '').includes('level2ContextWindow: 128000 → 1000000'), String(repaired.text))
+  check('retune persisted globally', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
   const afterRepair = await call('pipeline_model_setup')
   check('message no longer flags an invalid pairing', !afterRepair.message.includes('🚨 当前 L2 配对无效'), afterRepair.message.slice(0, 400))
   check('current line shows the corrected provider', afterRepair.message.includes('qwen-token-plan-cn/qwen3.7-plus'), afterRepair.message.slice(0, 400))
@@ -185,6 +201,15 @@ try {
   check('pairing check failed', pairing?.ok === false, JSON.stringify(pairing))
   check('degraded lists the pairing check', (self.degraded ?? []).includes('L2 model/provider'), JSON.stringify(self.degraded))
   check('detail names the provider that serves it', String(pairing?.detail ?? '').includes('qwen-token-plan-cn'), String(pairing?.detail))
+
+  section('sweet spot follows the host window for profile-less models (v128)')
+  // Drag the tuning back to flash's stale defaults behind autoPair's back, then
+  // re-pairing must restore the 1M-window numbers — including in the global file.
+  await configCmd('level2Model deepseek-flash')
+  check('profile model restores its own numbers', readGlobal().level2ContextBudget === 32000, JSON.stringify(readGlobal()))
+  const retuned = await configCmd('level2Model qwen3.7-plus')
+  check('budget restored to 1M×0.25', String(retuned.text ?? '').includes('level2ContextBudget: 32000 → 250000'), String(retuned.text))
+  check('retune persisted globally again', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
 } finally {
   rmSync(tmp, { recursive: true, force: true })
 }

@@ -310,6 +310,11 @@ window.__ModuleLoader__.load({
         const used = Number(tokens) || 0
         const lim = Number(danger) > 0 ? Number(danger) : 0
         const win = Number(contextWindow) > 0 ? Number(contextWindow) : Math.max(lim, cap) || 0
+        // v128 — when neither a built-in profile nor the host knows this model's
+        // window (e.g. an L1 chat model with no /pipe-config level1Model profile),
+        // there is no honest scale to paint: show "窗口未知" and neutral steel fill
+        // instead of inventing percentages against a guessed base.
+        const winUnknown = !(Number(contextWindow) > 0) && used > 0
         const bas = win > 0 ? win : Math.max(lim, cap)
         const pct = finished ? 100 : Math.max(0, Math.min(100, Math.round((bas > 0 ? used / bas : 0) * 100)))
         const inDanger = lim > 0 && used >= lim
@@ -318,10 +323,12 @@ window.__ModuleLoader__.load({
         // window before the danger line. A plain session at 96K/128K (danger=96K)
         // still shades amber approaching it; a compressed session at 100K pressure
         // on a 1M-window model stays neutral steel, not alarmist.
-        const nearDanger = inWarn && lim > 0 && win > 0 && used / win >= Math.max(0, lim / win - 0.05)
+        const nearDanger = !winUnknown && inWarn && lim > 0 && win > 0 && used / win >= Math.max(0, lim / win - 0.05)
         const fillColor = finished
           ? C.done
-          : inDanger
+          : winUnknown
+            ? 'rgba(148,163,184,.55)'
+            : inDanger
             ? 'rgba(248,81,73,.92)'
             : nearDanger
               ? 'rgba(251,191,36,.90)'
@@ -331,7 +338,9 @@ window.__ModuleLoader__.load({
         const valueColor = finished ? C.done : inDanger ? C.error : nearDanger ? C.warn : inWarn ? C.sub : C.text
         const titleText = lim > 0
           ? `${label}｜当前 ${fmtCount(used)}／甜点 ${fmtCount(cap)}／危险线 ${fmtCount(lim)}／窗口 ${fmtCount(win)}。装了压缩代理时这是原始请求压力，实际上下文可能小得多、表现照常——灰色=过甜点仅提示，琥珀=逼近危险线，红色=过线才建议 checkpoint（数值见各条）`
-          : label
+          : winUnknown
+            ? `${label}｜当前 ${fmtCount(used)}：该模型没有内置档案、宿主也未上报窗口，不画假刻度。换模型时命令会自动对齐；也可手动 /pipe-config level1ContextWindow <值>`
+            : label
         return h(
           'div',
           { key, style: { display: 'flex', flexDirection: 'column', gap: 3, marginTop: top ?? 6 } },
@@ -361,7 +370,7 @@ window.__ModuleLoader__.load({
               : h(
                   'span',
                   { style: { color: cap > 0 ? valueColor : C.sub, fontWeight: 600, flex: 'none', fontVariantNumeric: 'tabular-nums' } },
-                  cap > 0 ? `${fmtCount(used)}/${fmtCount(cap)}` : '—',
+                  cap > 0 && !winUnknown ? `${fmtCount(used)}/${fmtCount(cap)}` : winUnknown ? fmtCount(used) : '—',
                 ),
             finished
               ? null
@@ -370,7 +379,7 @@ window.__ModuleLoader__.load({
                   {
                     style: { color: inDanger ? C.error : C.sub, flex: 'none', width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
                   },
-                  cap > 0 ? `${pct}%` : '—',
+                  cap > 0 && !winUnknown ? `${pct}%` : winUnknown ? '未知' : '—',
                 ),
             // Provenance badge sits right of the percent so 测/估 never wraps.
             !finished && badge

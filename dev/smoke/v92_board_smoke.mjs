@@ -211,6 +211,11 @@ check('client keeps sweet/danger thresholds in tooltips only', clientSrc.include
 check('v127 neutral past-sweet fill', clientSrc.includes("rgba(148,163,184,.85)"))
 check('v127 amber limited to near-danger band', clientSrc.includes('nearDanger'))
 check('v127 tooltip calls the lines advisory under proxies', clientSrc.includes('装了压缩代理时这是原始请求压力'))
+// v128 — unknown window: no fake scale. The meter shows 未知 and a neutral fill,
+// and the tooltip names the two ways to fix it (auto-align on model change / manual key).
+check('v128 unknown-window state exists', clientSrc.includes('winUnknown'))
+check('v128 percent slot says 未知 instead of a guessed pct', clientSrc.includes("winUnknown ? '未知'"))
+check('v128 unknown-window tooltip offers the manual window key', clientSrc.includes('不画假刻度') && clientSrc.includes('level1ContextWindow'))
 const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 check('package.json exports ./client', pkg.exports?.['./client'] === './client.js')
 check('package.json ships client.js', Array.isArray(pkg.files) && pkg.files.includes('client.js'))
