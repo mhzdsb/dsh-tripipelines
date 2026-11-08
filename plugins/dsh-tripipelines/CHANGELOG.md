@@ -2,6 +2,25 @@
 
 > 版本号规则：DSH 桌面端按「模块真实路径」缓存导入结果，改代码后需**复制到全新目录 + 改包名 + 重装**才能生效。因此每次迭代用 `-vN` 后缀命名新 bundle（v114 起为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`），版本号即迭代序号。
 
+## v124 — 1.28.0（可以手动关闭三级：只用 L1 + L2 两级协作）
+
+### 变更
+- **`level3Mode` 新增 `off`**：`/pipe-config level3Mode off`（或简写 `/pipe-config level3Model <id> off`）把插件切成两级——L1 照常规划/派发/验收，L2 负责人自己写全部代码。恢复用 `/pipe-config level3Mode auto`（也可 `/pipe-config level3Model <id> mode=auto` 换模型顺带恢复）。
+- **执行面拒绝**：off 时 `pipeline_execute_local` / `pipeline_execute_batch` 返回 `{ok:false, blocked:true, l3Disabled:true}` 并说明「本任务由你（二级负责人）自己完成，完成后用 pipeline_register_output 登记」；`pipeline_spawn_local_executor` 直接抛错同样给出路径。`pipeline_decompose` / `pipeline_review` / `pipeline_register_output` 不受影响，两级下照常工作。
+- **不会偷偷复活**：off 状态下改 `level3Model` 只做记录、不再自动配对回 executor/agent（输出 ℹ️ 提示）；只有显式带 `mode=` 才重新启用。`pipeline_model_setup({apply:'defaults'})` 尊重当前 off，不覆盖三级配置。
+- **开工清单与提问**：off 时 L3 段改为「已关闭」状态块，附两条恢复命令；问题选项在开启态多一个「只用 L1+L2（关闭三级执行器）」、关闭态换成「恢复三级执行器」（恒为 4 选项）。`pipeline_model_setup({apply:'custom', level3Mode:'off'})` 可一步关闸并写入项目记录 `model-setup.json`。
+- **L2 提示词切换两级版**：`buildL2LeadPrompt` 在 off 时改用两级拓扑（无 DOWN 层、去掉硬性派发规则、改为「自己写完 → register_output → review」），协议 config 行显示 `L3 OFF (two-tier: L2 writes code itself)`。
+- `pipeline_selftest`：off 时输出 ok:true 的 `L3 disabled` 检查（不进 degraded），且不再探测本地引擎端点；插件启动时的端点自检在 off 下整体跳过。SKILL.md Phase 3 增加「L3 OFF (v124)」条目并与 SKILL_BODY 字节同步。
+
+### 测试
+- 新增 `dev/smoke/v124_l3_off_smoke.mjs`（29 断言）：off 落盘与命令文案、裸 `off` 简写、off 下改模型不自愈、`mode=auto` 同条命令恢复并判 executor、三个执行工具逐一验证、selftest 只报 disabled 不探引擎、setup 一步关闸 + 项目记录 + 清单/提问文案、defaults 不覆盖 off、工具级恢复后 execute_local 放行。
+- v121 用例更新为 4 选项断言；测试链 18 → 19 套件，`npm test` 全绿。
+
+### 文档
+- README / TUTORIAL / QUICKSTART：补「关闭三级（两级模式）」用法。
+
+版本 1.27.0 → 1.28.0（行为变化：用户可用一条命令关闭三级执行器，插件以 L1+L2 两级运行；所有 L3 派发入口被明确拒绝并指向二级直写路径）。
+
 ## v123 — 1.27.0（L3 可以是云端模型，并可带模式；`/pipe-config` 直接自配对 provider）
 
 ### 变更

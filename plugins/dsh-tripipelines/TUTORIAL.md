@@ -117,6 +117,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 /pipe-config level3Model qwen3.8-27b-gsq-rco-iq3-s-mtp
 /pipe-config level2Model deepseek-flash
 /pipe-config level3Model qwen3.7-plus mode=agent     # 云端 L3：作为 DSH 子代理运行（provider 自动配对）
+/pipe-config level3Mode off                          # 关闭三级，只用 L1+L2（二级自己写代码；恢复用 level3Mode auto）
 /pipe-config semanticGateThreshold 0.6
 /pipe-config maxLevel2Agents 4
 /pipe-config level3Compression L0
@@ -131,7 +132,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 | `level2Provider` | `deepseek-official` | 二级模型 provider |
 | `level2Model` | `deepseek-flash` | 二级模块负责人模型 |
 | `level3Model` | `qwen3.8-27b-gsq-rco-iq3-s-mtp` | 三级模型（本地引擎或云端 provider 模型） |
-| `level3Mode` | `auto` | 三级执行模式（v123）：`executor` 本地端点一次性执行 / `agent` DSH 子代理（云端模型必用）/ `auto` 按模型来源判断 |
+| `level3Mode` | `auto` | 三级执行模式（v123/v124）：`executor` 本地端点一次性执行 / `agent` DSH 子代理（云端模型必用）/ `off` 关闭三级只用 L1+L2 / `auto` 按模型来源判断 |
 | `level3Endpoint` | 空（必须显式配置） | OpenAI 兼容接口基址，例如 `http://127.0.0.1:8080/v1`（`executor` 模式使用） |
 | `level3Provider` | `ninfer-local` | `agent` 模式 L3 执行器使用的 LLM provider（命令会自动配套） |
 | `spawnProvider` | `spawn` | subagent provider 名（一般不用改） |

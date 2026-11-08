@@ -105,8 +105,8 @@ export const CONFIG_KEYS = {
   level3Provider: { type: 'string', desc: 'Level-3 子代理使用的 LLM provider 名（默认 ninfer-local；agent 模式下用）' },
   level3Mode: {
     type: 'enum',
-    values: ['auto', 'executor', 'agent'],
-    desc: '三级执行模式：auto=两条路都可用；executor=只走 OpenAI 兼容 HTTP（本地/自建端点）；agent=只走 DSH 子代理（云端 provider，如 token plan）',
+    values: ['auto', 'executor', 'agent', 'off'],
+    desc: '三级执行模式：auto=两条路都可用；executor=只走 OpenAI 兼容 HTTP（本地/自建端点）；agent=只走 DSH 子代理（云端 provider，如 token plan）；off=关闭三级，只用 L1+L2（二级直写代码）',
   },
   spawnProvider: { type: 'string', desc: '子代理 provider 名（默认 spawn；startActivation 用，通常不用改）' },
   level3InputBudget: { type: 'number', desc: '三级子任务输入 token 上限（默认 1200；超限先压缩，仍超则提示拆分）' },
@@ -397,8 +397,8 @@ export function handleConfigCommand(cfg, rawInput) {
         if (tok.includes('=')) {
           const i = tok.indexOf('=')
           pairs.push([tok.slice(0, i), tok.slice(i + 1)])
-        } else if (['auto', 'executor', 'agent'].includes(tok) && (a === 'level3Model' || a === 'level3Mode')) {
-          // shorthand: /pipe-config level3Model <id> agent
+        } else if (['auto', 'executor', 'agent', 'off'].includes(tok) && (a === 'level3Model' || a === 'level3Mode')) {
+          // shorthand: /pipe-config level3Model <id> agent  |  /pipe-config level3Mode off
           pairs.push(['level3Mode', tok])
         } else {
           throw new Error(`多余参数 "${tok}"；附加项请写成 key=value（例如 mode=agent、provider=<provider>）`)
@@ -483,6 +483,11 @@ export function handleConfigCommand(cfg, rawInput) {
       }
     }
     savePersistedConfig(patch)
+    // v124 — turning L3 off is a mode change, not a model change: tell the caller
+    // what the pipeline will do now so the note survives the /pipe-config output.
+    if (patch.level3Mode === 'off') {
+      lines.push('三级已关闭（level3Mode=off）：L2 自己写代码，pipeline_execute_local / pipeline_spawn_local_executor 会被拒绝；恢复用 /pipe-config level3Mode auto。')
+    }
     return { kind: 'success', text: [...lines, ...notes].join('\n'), changed: Object.keys(patch) }
   } catch (error) {
     return { kind: 'error', text: error?.message ?? String(error) }

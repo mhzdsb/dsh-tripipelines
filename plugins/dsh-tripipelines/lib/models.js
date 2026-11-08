@@ -251,8 +251,9 @@ export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConf
     level3Model: DEFAULT_CONFIG.level3Model,
   }
   const lines = []
+  const off = cur.level3Mode === 'off'
   if (applied) {
-    lines.push(`✅ 模型已定：L2 = ${cur.level2Provider}/${cur.level2Model} ｜ L3 = ${cur.level3Model}（${cur.level3Mode ?? 'auto'} 模式）`)
+    lines.push(`✅ 模型已定：L2 = ${cur.level2Provider}/${cur.level2Model} ｜ L3 = ${off ? '已关闭（两级协作）' : `${cur.level3Model}（${cur.level3Mode ?? 'auto'} 模式）`}`)
     lines.push(
       applied.changed?.length
         ? `（已更新：${applied.changed.join(', ')}；本项目记下了这套选择。）`
@@ -265,15 +266,18 @@ export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConf
   }
   lines.push('🚦 开工前先定模型 —— 不指定就直接用【默认】；想换哪个，把下面任意一行命令复制到输入框发给我即可。')
   lines.push('')
-  lines.push(`当前：L1 = 本对话所用模型 ｜ L2 = ${cur.level2Provider ?? '?'}/${cur.level2Model ?? '?'} ｜ L3 = ${cur.level3Model ?? '?'}（${cur.level3Mode ?? 'auto'} 模式）`)
+  lines.push(`当前：L1 = 本对话所用模型 ｜ L2 = ${cur.level2Provider ?? '?'}/${cur.level2Model ?? '?'} ｜ L3 = ${off ? '已关闭（两级协作）' : `${cur.level3Model ?? '?'}（${cur.level3Mode ?? 'auto'} 模式）`}`)
   const curEntry = l2Models.find((m) => m.id === cur.level2Model)
   const pairingBroken = curEntry && curEntry.providers?.length && !curEntry.providers.includes(cur.level2Provider)
   if (pairingBroken) {
     lines.push(`🚨 当前 L2 配对无效：${cur.level2Model} 不在 ${cur.level2Provider ?? '?'} 下（应在 ${curEntry.providers.join(', ')}）。先发：/pipe-config level2Provider ${curEntry.providers[0]}`)
   }
   lines.push(
-    `默认：L2 = ${l2Default?.model ?? cur.level2Model ?? '?'} ｜ L3 = ${l3Default?.model ?? cur.level3Model ?? '?'}` +
-      (l3?.source === 'engine' ? '（本机 /models 排序第 1）' : '（引擎未在线，取配置值）'),
+    `默认：L2 = ${l2Default?.model ?? cur.level2Model ?? '?'}` +
+      (off
+        ? ' ｜ L3 = 无（关闭三级时默认就是两级；恢复见下面 ②）'
+        : ` ｜ L3 = ${l3Default?.model ?? cur.level3Model ?? '?'}` +
+          (l3?.source === 'engine' ? '（本机 /models 排序第 1）' : '（引擎未在线，取配置值）')),
   )
   lines.push('')
   lines.push('① 二级模型 L2（模块负责人：拆任务 + 写多文件代码）')
@@ -310,6 +314,16 @@ export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConf
     lines.push('   只发 level2Model 会沿用当前 provider；跨 provider 选模型时，把该分组上方的 level2Provider 行一起发。')
   }
   lines.push('')
+  if (cur.level3Mode === 'off') {
+    // v124 — L3 is switched off: no executor list to offer, just the way back.
+    lines.push('② 三级模型 L3 —— 已关闭（level3Mode=off）')
+    lines.push('   当前为两级协作：L1 规划 + L2 自己写代码，不派发三级执行器。')
+    lines.push('   /pipe-config level3Model <id> mode=auto   # 想恢复三级：重新指定模型并回到 auto/executor/agent')
+    lines.push('   /pipe-config level3Mode auto              # 或只切回模式（沿用原模型）')
+    lines.push('')
+    lines.push('不想用三级协作：回复「不用三级模式」或 /pipe-config mode off。')
+    return lines.join('\n')
+  }
   lines.push('② 三级模型 L3（executor：本机端点一次性执行 ｜ agent：DSH 子代理，走云端 provider）')
   if (l3Models.length === 0) {
     lines.push('   （没有发现可用模型；检查 level3Endpoint 后重跑 pipeline_model_setup）')
@@ -324,6 +338,9 @@ export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConf
       lines.push('   云端模型也能当 L3（agent 模式；provider 自动配对，不需要 level3Endpoint）：')
       lines.push(`   /pipe-config level3Model ${example} mode=agent   # 示例：换成上面 L2 列表里任意模型`)
     }
+    // v124 — the L3-off switch lives next to the L3 list it disables.
+    lines.push('   不想用三级执行器（只留 L1+L2，二级自己写代码）：')
+    lines.push('   /pipe-config level3Mode off')
   }
   lines.push('')
   const l2Incomplete = l2?.source !== 'llm' && l2Models.length > 0
@@ -340,17 +357,26 @@ export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConf
 }
 
 // ask_user_question payload the L1 should raise right after posting the message.
-export function buildModelSetupQuestion({ defaults } = {}) {
+export function buildModelSetupQuestion({ defaults, level3Mode } = {}) {
   const l2 = defaults?.level2?.model ?? DEFAULT_CONFIG.level2Model
-  const l3 = defaults?.level3?.model ?? '本机排序第 1'
+  const off = level3Mode === 'off'
+  const l3 = off ? '关闭（只用 L1+L2）' : defaults?.level3?.model ?? '本机排序第 1'
+  const options = [
+    { label: '用默认（推荐）', description: `L2 = ${l2}；L3 = ${l3}（不指定即默认）` },
+    { label: '我自己指定', description: '复制消息里的 /pipe-config 命令发送，我按你的选择跑' },
+  ]
+  // v124 — a third path between "three tiers" and "no pipeline at all": keep L1+L2
+  // but drop the executor tier. Only offer it when L3 is not already off.
+  if (!off) {
+    options.push({ label: '只用 L1+L2（关闭三级执行器）', description: '二级自己写代码（/pipe-config level3Mode off），一级规划与验收照常' })
+  } else {
+    options.push({ label: '恢复三级执行器', description: '重新启用 L3（/pipe-config level3Mode auto，沿用当前三级模型）' })
+  }
+  options.push({ label: '本项目不用三级协作', description: '单 agent 工作（/pipe-config mode off）' })
   return {
     header: '开工前定模型',
-    question: `本项目用哪套模型？（默认 L2 = ${l2}，L3 = ${l3}；想换就复制上面的命令发我）`,
-    options: [
-      { label: '用默认（推荐）', description: `L2 = ${l2}；L3 = ${l3}（不指定即默认）` },
-      { label: '我自己指定', description: '复制消息里的 /pipe-config 命令发送，我按你的选择跑' },
-      { label: '本项目不用三级协作', description: '单 agent 工作（/pipe-config mode off）' },
-    ],
+    question: `本项目用哪套模型？（默认 L2 = ${l2}，L3 = ${l3}；想换哪个，把上面对应的命令复制发给我）`,
+    options,
   }
 }
 
@@ -383,6 +409,13 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
     // detection; a caller that changed level3Mode to auto still gets auto-picked.
     const modeExplicit = set.has('level3Mode') && cfg.level3Mode !== 'auto'
     const providerExplicit = set.has('level3Provider')
+    // v124 — the user explicitly switched L3 off; never auto-re-enable it by
+    // pairing a model they just stopped using. An explicit `mode=auto` on the
+    // same command IS the re-enable signal and falls through to detection.
+    if (cfg.level3Mode === 'off' && !(set.has('level3Mode') && modeExplicit)) {
+      notes.push('ℹ️ 三级已关闭（level3Mode=off）：模型改动不会自动恢复三级；要重新启用发 /pipe-config level3Mode auto。')
+      return notes
+    }
     const engine = await discoverLevel3Models(cfg, { timeoutMs: Math.min(timeoutMs, 2500) })
     const inEngine = engine.source === 'engine' && engine.models.some((m) => m.id === cfg.level3Model)
     if (inEngine) {

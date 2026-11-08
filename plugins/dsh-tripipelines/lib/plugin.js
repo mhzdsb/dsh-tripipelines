@@ -143,6 +143,9 @@ function apply(ctx, config) {
   // dead endpoint shows up in the log now rather than at the first L3 dispatch.
   // v104 — an unset endpoint is a configuration state, not a network failure.
   void (async () => {
+    // v124 — level3Mode=off is a deliberate two-tier state: no endpoint probe,
+    // no "endpoint unset" warning.
+    if (String(cfg.level3Mode) === 'off') return
     const endpoint = String(cfg.level3Endpoint ?? '').trim()
     if (!endpoint) {
       console.warn('[pipeline] level3Endpoint 未配置：三级执行暂不可用。用 /pipe-config level3Endpoint http://127.0.0.1:8080/v1 指向本机 OpenAI 兼容引擎。')

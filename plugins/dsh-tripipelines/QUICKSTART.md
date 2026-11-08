@@ -20,6 +20,8 @@ curl http://127.0.0.1:8080/v1/models
 > v122 起，模型清单按 provider 分组；选别家 provider 的模型（如千问 Token Plan 的 `qwen3.7-plus`）时，清单会在组前给出配套的 `/pipe-config level2Provider <id>`。漏发也不会发错 API：派发前会自动纠正到正确的 provider，并在 `providerNote` 里说明；`pipeline_selftest` 也会报 `L2 model/provider` 不匹配。
 >
 > v123 起更省事：`/pipe-config level2Model <id>` / `/pipe-config level3Model <id>` 只写模型名，命令会自动配套 provider。L3 也能用云端模型：`/pipe-config level3Model qwen3.7-plus mode=agent`（作为 DSH 子代理运行，不需要 `level3Endpoint`）；`mode=executor` 保持本地端点一次性执行，默认 `mode=auto` 按模型来源判断。
+>
+> v124 起可以关掉三级：`/pipe-config level3Mode off` 后插件只用 L1+L2——一级照常规划验收，二级自己写代码（写完 `pipeline_register_output` 登记 + `pipeline_review` 过门）。恢复：`/pipe-config level3Mode auto`。
 
 ## 第 1 步：装插件（1 分钟）
 

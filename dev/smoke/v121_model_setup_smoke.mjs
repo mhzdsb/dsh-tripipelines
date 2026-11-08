@@ -160,7 +160,8 @@ async function main() {
   check('explains the provider command', message.includes('只发 level2Model 会沿用当前 provider'), message)
   check('keeps the no-three-tier escape hatch', message.includes('不用三级模式') && message.includes('/pipe-config mode off'), message)
   const question = models.buildModelSetupQuestion({ defaults: { level2: l2Def, level3: { model: 'local-a' } } })
-  check('question has the three onboarding choices', question.options?.length === 3 && question.options[0].label.includes('默认'))
+  // v124 — the onboarding question grew a "只用 L1+L2（关闭三级执行器）" option.
+  check('question has the four onboarding choices', question.options?.length === 4 && question.options[0].label.includes('默认'))
 
   section('tool registration + defaults apply')
   const { apply } = await import(pathToFileURL(join(libDir, 'plugin.js')).href)

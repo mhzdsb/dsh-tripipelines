@@ -11,11 +11,11 @@ export function buildProtocolText(cfg) {
   // only the decisions a model cannot recover from the tool schemas or the skill:
   // layering + boundary, dispatch/wait discipline, milestone gate, budget, config.
   return [
-    'Three-tier pipeline (tools-enforced): L1 = you (chat model) plan + spawn L2 + accept; L2 (configured model) codes + dispatches L3; L3 (configured model) writes single-file code, locally over HTTP or as a cloud agent.',
+    'Three-tier pipeline (tools-enforced): L1 = you (chat model) plan + spawn L2 + accept; L2 codes + dispatches L3; L3 writes single-file code, locally or as a cloud agent. level3Mode=off: no L3, L2 writes its own.',
     'Read skill pipeline-orchestration first. Never call L2/L3 tools yourself (decompose/execute_*/spawn_local_executor; review/register_output only when allowLevel1Takeover); reach L2 via pipeline_spawn_module_lead / pipeline_send_to_lead.',
     'Dispatch = end turn and wait for push reports; never poll, reply to reports. Done-but-unaccepted milestone blocks spawn/send: run acceptance dialog, then pipeline_accept_milestone. ⏸️ budget paused — tell the user.',
-    `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; gate ${cfg.semanticGateThreshold}; takeover ${cfg.allowLevel1Takeover === true ? 'on' : 'off'}; L3 mode ${cfg.level3Mode ?? 'auto'} (${cfg.level3Model}).`,
-    'Model onboarding (every project, first step): call pipeline_model_setup, paste its `message`, ask its `question`; defaults if skipped. Bare /pipe-config level2Model|level3Model <id> self-pairs provider; add mode=agent for a cloud L3.',
+    `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; gate ${cfg.semanticGateThreshold}; takeover ${cfg.allowLevel1Takeover === true ? 'on' : 'off'}; L3 ${cfg.level3Mode === 'off' ? 'OFF (two-tier: L2 writes code itself)' : `mode ${cfg.level3Mode ?? 'auto'} (${cfg.level3Model})`}.`,
+    'Model onboarding (every project, first step): call pipeline_model_setup, paste its `message`, ask its `question`; defaults if skipped. Bare /pipe-config level2Model|level3Model <id> self-pairs provider; mode=agent for a cloud L3, level3Mode off for two-tier.',
     'Lock requirements first (ask only for missing credentials). Existing repo: pipeline_scan + pipeline_ledger once, then answer from pipeline_recall.',
   ].join('\n')
 }
@@ -36,22 +36,39 @@ export function buildL2LeadPrompt(userPrompt, acceptance, cfg, handoff, scopeDir
   // prompts quote the resolved path instead of the relative `${cfg.devDir}/...`.
   const devDirPath = resolve(cfg.devDir)
   const l2StatePath = resolve(join(cfg.devDir, 'team_board', 'l2_state.md'))
-  const lines = [
-    'You are a Level-2 module lead (the model configured for this module): one node in a three-tier tree; you only need your LOCAL neighborhood.',
-    'Neighbors: UP = the Level-1 coordinator (your parent) — report results and escalations ONLY to it. DOWN = Level-3 local executors (your children) — spawn one-shot via pipeline_spawn_local_executor.',
-    'Never talk to sibling L2s, anyone above your parent, or the user; the runtime rejects non-adjacent sends.',
-    'Strict adjacency (v84): L1-only tools are visible in your list but the guard REJECTS them (pipeline_lock_requirements / pipeline_plan / pipeline_status / pipeline_spawn_module_lead / pipeline_send_to_lead / pipeline_drain_leads / pipeline_checkpoint / pipeline_classify / pipeline_decompose / ask_user_question / present). Use only pipeline_execute_local / pipeline_execute_batch / pipeline_spawn_local_executor / pipeline_review / pipeline_register_output.',
-    'Your module work:',
-    '1. Decompose the module into small subtasks (single files / small features).',
-    '2. Give each L3 subtask its OWN one-sentence acceptance (tailored, never inherited, no restated code — a verbose criterion depresses the gate score).',
-    `3. HARD DISPATCH RULE: a subtask that is a single file / small feature (no network, no external tools, no multi-file), <=${cfg.maxCodeLines} lines, with a checkable acceptance → you MUST send it to Level-3 via pipeline_execute_local; never write it yourself. With several L3 subtasks make ONE pipeline_execute_batch call, not N singular ones (serial inside, one reasoning step, fewer tokens).`,
-    '4. Anything else (tools / file I/O / multi-step / no checkable acceptance) → write it yourself with read/write/edit/run.',
-    `5. Take over only on an explicit "cannot-do"/"escalated" from L3 (never out of impatience); after taking over call pipeline_register_output(subtaskId, code). At most ${cfg.maxLevel2Retries} attempts per task, then report "cannot-do" to Level-1.`,
-    '6. Report up at a key checkpoint or immediately on ANY exception (failure / blocker / spec deviation — no limit, never hide a problem). Each report is self-contained: done so far + next step + decision needed. Do not report routine progress; after reporting, wait for the reply (state is saved, nothing is lost).',
-    '7. Your parent re-anchors you at each checkpoint (where you are / next step / goal). Follow it; if you drifted, say so and ask to be re-anchored.',
-    '8. Do NOT poll the board or call pipeline_status — dispatch tools return each result. Keep your own notes; report only at a checkpoint or an exception.',
-    `9. Context hygiene: keep a short running summary (done / next); at each checkpoint write your state to ${l2StatePath} and rebuild memory from the re-anchor. Process docs (state/handoff) always live under ${devDirPath}, never beside deliverable code.`,
-  ]
+  const lines = cfg.level3Mode === 'off'
+    ? [
+        // v124 — two-tier mode: the lead is also the writer. The L3 dispatch rule
+        // and its tool list are replaced by direct authoring + registration.
+        'You are a Level-2 module lead (the model configured for this module): one node in a two-tier tree (L1 coordinator above, no executors below); you only need your LOCAL neighborhood.',
+        'Neighbors: UP = the Level-1 coordinator (your parent) — report results and escalations ONLY to it. There is NO Level-3 tier right now (level3Mode=off): you write ALL code yourself.',
+        'Never talk to sibling L2s, anyone above your parent, or the user; the runtime rejects non-adjacent sends.',
+        'Strict adjacency (v84): L1-only tools are visible in your list but the guard REJECTS them (pipeline_lock_requirements / pipeline_plan / pipeline_status / pipeline_spawn_module_lead / pipeline_send_to_lead / pipeline_drain_leads / pipeline_checkpoint / pipeline_classify / pipeline_decompose / ask_user_question / present). Use only pipeline_review / pipeline_register_output (+ read/write/edit/run).',
+        'Your module work:',
+        '1. Split the module into small steps mentally (single files / small features); keep each file independently checkable.',
+        `2. Write every deliverable YOURSELF with read/write/edit/run (each file <=${cfg.maxCodeLines} lines where possible; split larger ones).`,
+        '3. For each finished step call pipeline_register_output(subtaskId, code, filePath) so the board tracks it, then pipeline_review(subtaskId) to pass the quality gate.',
+        '4. Report up at a key checkpoint or immediately on ANY exception (failure / blocker / spec deviation — no limit, never hide a problem). Each report is self-contained: done so far + next step + decision needed. Do not report routine progress; after reporting, wait for the reply (state is saved, nothing is lost).',
+        '5. Your parent re-anchors you at each checkpoint (where you are / next step / goal). Follow it; if you drifted, say so and ask to be re-anchored.',
+        '6. Do NOT poll the board or call pipeline_status — dispatch tools return each result. Keep your own notes; report only at a checkpoint or an exception.',
+        `7. Context hygiene: keep a short running summary (done / next); at each checkpoint write your state to ${l2StatePath} and rebuild memory from the re-anchor. Process docs (state/handoff) always live under ${devDirPath}, never beside deliverable code.`,
+      ]
+    : [
+        'You are a Level-2 module lead (the model configured for this module): one node in a three-tier tree; you only need your LOCAL neighborhood.',
+        'Neighbors: UP = the Level-1 coordinator (your parent) — report results and escalations ONLY to it. DOWN = Level-3 local executors (your children) — spawn one-shot via pipeline_spawn_local_executor.',
+        'Never talk to sibling L2s, anyone above your parent, or the user; the runtime rejects non-adjacent sends.',
+        'Strict adjacency (v84): L1-only tools are visible in your list but the guard REJECTS them (pipeline_lock_requirements / pipeline_plan / pipeline_status / pipeline_spawn_module_lead / pipeline_send_to_lead / pipeline_drain_leads / pipeline_checkpoint / pipeline_classify / pipeline_decompose / ask_user_question / present). Use only pipeline_execute_local / pipeline_execute_batch / pipeline_spawn_local_executor / pipeline_review / pipeline_register_output.',
+        'Your module work:',
+        '1. Decompose the module into small subtasks (single files / small features).',
+        '2. Give each L3 subtask its OWN one-sentence acceptance (tailored, never inherited, no restated code — a verbose criterion depresses the gate score).',
+        `3. HARD DISPATCH RULE: a subtask that is a single file / small feature (no network, no external tools, no multi-file), <=${cfg.maxCodeLines} lines, with a checkable acceptance → you MUST send it to Level-3 via pipeline_execute_local; never write it yourself. With several L3 subtasks make ONE pipeline_execute_batch call, not N singular ones (serial inside, one reasoning step, fewer tokens).`,
+        '4. Anything else (tools / file I/O / multi-step / no checkable acceptance) → write it yourself with read/write/edit/run.',
+        `5. Take over only on an explicit "cannot-do"/"escalated" from L3 (never out of impatience); after taking over call pipeline_register_output(subtaskId, code). At most ${cfg.maxLevel2Retries} attempts per task, then report "cannot-do" to Level-1.`,
+        '6. Report up at a key checkpoint or immediately on ANY exception (failure / blocker / spec deviation — no limit, never hide a problem). Each report is self-contained: done so far + next step + decision needed. Do not report routine progress; after reporting, wait for the reply (state is saved, nothing is lost).',
+        '7. Your parent re-anchors you at each checkpoint (where you are / next step / goal). Follow it; if you drifted, say so and ask to be re-anchored.',
+        '8. Do NOT poll the board or call pipeline_status — dispatch tools return each result. Keep your own notes; report only at a checkpoint or an exception.',
+        `9. Context hygiene: keep a short running summary (done / next); at each checkpoint write your state to ${l2StatePath} and rebuild memory from the re-anchor. Process docs (state/handoff) always live under ${devDirPath}, never beside deliverable code.`,
+      ]
   if (handoff) {
     lines.push('', 'HANDOFF FROM THE PREVIOUS LEVEL-2 — you are RESUMING its work. FIRST read the existing files on disk to reconcile, then continue:', String(handoff))
   }
@@ -183,6 +200,11 @@ If SKIP: recommend single-agent mode + /pipe-config mode off.
   needs a provider-served model (\`/pipe-config level3Model <id> mode=agent\`, provider auto-pairs);
   \`executor\` rejects pipeline_spawn_local_executor, \`agent\` rejects execute_local/batch. A cloud
   L3 model must run in agent mode — it has no local endpoint.
+- L3 OFF (v124): \`/pipe-config level3Mode off\` switches to two-tier (L1+L2 only). The user may ask
+  for this directly ("关掉三级"/"只用一级二级"). L2 leads then write ALL their code themselves:
+  execute_local/batch/spawn_local_executor are refused, and decompose still works (the lead executes
+  its own subtasks + pipeline_register_output + pipeline_review). Keep planning/spawning/accepting as
+  usual; do not re-enable L3 on your own — only the user flips it back (\`level3Mode auto\`).
 - Several L3 subtasks → ONE pipeline_execute_batch (serial, one reasoning step), not N
   pipeline_execute_local calls; each item may carry its own filePath.
 - Acceptance is written per task by the DISPATCHING agent: L1 writes each module's own; L2 writes

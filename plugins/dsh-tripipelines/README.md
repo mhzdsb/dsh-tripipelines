@@ -98,7 +98,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 | **预算护栏** | `maxTotalTokensPerRun` / `maxDurationPerRun` / `maxFilesPerRun`（0=不限） |
 | **一次性激活 Gate** | 新工作区只问一次，答案按工作区记忆，之后不再打扰 |
 | **健康自检** | `/pipe-selftest` 检查 subagents API、llm 服务、L3 引擎；启动时也会非阻塞 ping |
-| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起 18 套 smoke 回归 |
+| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起 19 套 smoke 回归 |
 | **四阶段工作流** | 开工定模型（v121）→ 需求访谈 → 适配性评估 → 自适应调度 |
 
 > 完整功能清单见 [CHANGELOG.md](CHANGELOG.md)，架构细节见 [docs/agent-lifecycle-design.md](docs/agent-lifecycle-design.md)。
@@ -143,7 +143,7 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 | `level1Model` | `deepseek-pro` | 一级模型（仅甜点区档案查询，不切换实际 L1） |
 | `level2Provider` / `level2Model` | `deepseek-official` / `deepseek-flash` | 二级模型 |
 | `level3Model` / `level3Provider` / `level3Endpoint` | 由配置指定 / `ninfer-local` / **空**（必须显式配置） | 三级模型；`executor` 模式走该端点的 OpenAI 协议（`/pipe-config level3Endpoint http://127.0.0.1:8080/v1`），`agent` 模式走 provider 子代理 |
-| `level3Mode` | `auto` | L3 执行模式（v123）：`auto` 按模型来源判断（引擎模型→executor，云端→agent）/ `executor`=本地端点一次性执行 / `agent`=DSH 子代理（云端模型必用） |
+| `level3Mode` | `auto` | L3 执行模式（v123/v124）：`auto` 按模型来源判断（引擎模型→executor，云端→agent）/ `executor`=本地端点一次性执行 / `agent`=DSH 子代理（云端模型必用）/ `off`=关闭三级，只用 L1+L2（二级自己写代码） |
 | `level3Engine` | `auto` | 引擎提示（auto/ollama/vllm/llamacpp/openai-compat/other） |
 | `maxCodeLines` | `100` | L3 交付代码行数上限 |
 | `maxLevel3Retries` | `5` | L3 失败最大重试，超限 L2 接管 |
@@ -176,6 +176,8 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 **跨 provider 选模型（v122/v123）**：模型 id 只在提供它的 provider 下有效（例如千问 Token Plan 的 `qwen3.7-plus` 属于 `qwen-token-plan-cn`）。现在 `/pipe-config level2Model <id>` 直接写模型名即可：命令执行后会自动配套 provider 并输出 `🔧 已自动配套 level2Provider=…`；清单也会按 provider 分组给出可复制的 provider 行。派发前还有一次校验兜底（`providerNote`），显式传 `provider` 的调用不会被改写，只会警告。
 
 **云端 L3 / 模式（v123）**：L3 不一定是本地引擎。`/pipe-config level3Model <id> mode=agent` 会把该模型作为 DSH 子代理运行（走它所属 provider，不需要 `level3Endpoint`）；`mode=executor` 保持本地 OpenAI 兼容端点一次性执行；`mode=auto`（默认）按模型来源判断——引擎模型 → executor，云端模型 → agent。`pipeline_model_setup` 的 `apply:'custom'` 遇到云端 L3 会自动切成 agent 并配套 provider。`level3Mode=agent` 时 `execute_local/batch` 会被拒绝，`executor` 时 `spawn_local_executor` 会被拒绝，避免把云端模型 id 发到错误端点。
+
+**关闭三级（v124）**：`/pipe-config level3Mode off` 把插件切成两级协作——L1 照常规划、派发模块负责人、验收里程碑，L2 自己写全部代码（写完 `pipeline_register_output` 登记、`pipeline_review` 过质量门）。off 时三个 L3 派发入口（`execute_local` / `execute_batch` / `spawn_local_executor`）都会被明确拒绝并给出直写路径；改 `level3Model` 不会偷偷恢复三级，恢复要显式 `/pipe-config level3Mode auto`（或换模型时带 `mode=auto`）。开工清单与提问会同步显示「已关闭」状态并提供恢复命令。
 
 **甜点区自适应**：换 `level1Model`/`level2Model` 时按 `MODEL_PROFILES` 档案（窗口 × 比例）自动重算预算；不在档案里则提示手动设。
 
@@ -320,7 +322,7 @@ dsh-tripipelines/
 └── CHANGELOG.md                          # 版本日志
 ```
 
-`pnpm test`（在 `plugins/dsh-tripipelines/` 下）一键跑 18 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 48 断言（含看板跟随当前工作区、切换器与折叠栏同步）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）、v118 隔离 45 断言、v119 质量门出口 41 断言（register→review / 计划期验收校验 / `cmd:` 文件任务 / 里程碑阻塞项 / 兜底切分 / lock 归档 / 计数说明 / `_scratch` 跳过）、v120 研讨移交 20 断言（`/pipe-research` 唤醒 agent 问第 1 步 / 无 `followup` 宿主降级 / 空议题兜底）、v121 开工定模型 43 断言（L2/L3 发现与排序回退 / 可复制命令 / 默认落盘 / lock hint / 项目记录 / custom 校验）、v122 跨 provider 配对 26 断言（清单分组与 provider 行 / 裸模型命令自配对 / custom 自动配套 / spawn 自动纠正 / 显式 provider 尊重 / selftest degraded）、v123 L3 模式 23 断言（`mode=agent` 落盘与配套 / agent 模式 selftest / execute_local 拒绝 / executor 拒绝 spawn / auto 判引擎模型 / 裸 agent 简写 / 云端 L3 自动 agent / L2 上的 mode 被忽略）。
+`pnpm test`（在 `plugins/dsh-tripipelines/` 下）一键跑 19 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 48 断言（含看板跟随当前工作区、切换器与折叠栏同步）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）、v118 隔离 45 断言、v119 质量门出口 41 断言（register→review / 计划期验收校验 / `cmd:` 文件任务 / 里程碑阻塞项 / 兜底切分 / lock 归档 / 计数说明 / `_scratch` 跳过）、v120 研讨移交 20 断言（`/pipe-research` 唤醒 agent 问第 1 步 / 无 `followup` 宿主降级 / 空议题兜底）、v121 开工定模型 43 断言（L2/L3 发现与排序回退 / 可复制命令 / 默认落盘 / lock hint / 项目记录 / custom 校验）、v122 跨 provider 配对 26 断言（清单分组与 provider 行 / 裸模型命令自配对 / custom 自动配套 / spawn 自动纠正 / 显式 provider 尊重 / selftest degraded）、v123 L3 模式 23 断言（`mode=agent` 落盘与配套 / agent 模式 selftest / execute_local 拒绝 / executor 拒绝 spawn / auto 判引擎模型 / 裸 agent 简写 / 云端 L3 自动 agent / L2 上的 mode 被忽略）、v124 关闭三级 29 断言（off 落盘与文案 / 裸 off 简写 / off 下改模型不自愈 / mode=auto 恢复判定 / 三个执行入口逐一拒绝 / selftest 只报 disabled / setup 一步关闸与恢复 / defaults 不覆盖 off）。
 
 
 ---

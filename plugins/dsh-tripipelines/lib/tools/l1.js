@@ -88,7 +88,7 @@ export function makeModelSetupTool(ctx, cfg, r) {
         level2Model: { type: 'string', description: 'Custom L2 model id (apply=custom).' },
         level2Provider: { type: 'string', description: 'Custom L2 provider (apply=custom).' },
         level3Model: { type: 'string', description: 'Custom L3 model id (apply=custom). Local engine id → executor; cloud provider model → agent (auto-paired).' },
-        level3Mode: { type: 'string', enum: ['auto', 'executor', 'agent'], description: 'L3 mode (apply=custom). Defaults to auto-detection: engine model → executor, cloud model → agent.' },
+        level3Mode: { type: 'string', enum: ['auto', 'executor', 'agent', 'off'], description: 'L3 mode (apply=custom). Defaults to auto-detection: engine model → executor, cloud model → agent. off = two-tier L1+L2 only (no executor tier).' },
       },
     },
     output: {
@@ -114,30 +114,53 @@ export function makeModelSetupTool(ctx, cfg, r) {
           patch[key] = next
         }
         if (apply === 'defaults') {
-          if (!defaults.level2 || !defaults.level3) {
-            throw new Error('无法计算默认模型：本地模型列表为空。先跑 /pipe-selftest 检查 llm 服务与 L3 引擎。')
+          if (!defaults.level2) {
+            throw new Error('无法计算默认 L2 模型：本地模型列表为空。先跑 /pipe-selftest 检查 llm 服务。')
           }
           set('level2Model', defaults.level2.model, cfg.level2Model)
           set('level2Provider', defaults.level2.provider, cfg.level2Provider)
-          set('level3Model', defaults.level3.model, cfg.level3Model)
+          // v124 — an off L3 is a deliberate user choice; the default flow must not
+          // silently re-enable the executor tier.
+          if (cfg.level3Mode !== 'off') {
+            if (!defaults.level3) {
+              throw new Error('无法计算默认 L3 模型：本地引擎与档案均无候选。先启动引擎，或 /pipe-config level3Mode off 走两级模式。')
+            }
+            set('level3Model', defaults.level3.model, cfg.level3Model)
+          }
           // The default L3 comes from the local engine; `auto` keeps both the HTTP
           // executor and the subagent path available, and a cloud L3 switches to
           // agent automatically when its model is applied.
-          set('level3Mode', 'auto', cfg.level3Mode)
+          if (cfg.level3Mode !== 'off') set('level3Mode', 'auto', cfg.level3Mode)
         } else {
           const requested = {
             level2Model: typeof args.level2Model === 'string' ? args.level2Model.trim() : '',
             level2Provider: typeof args.level2Provider === 'string' ? args.level2Provider.trim() : '',
             level3Model: typeof args.level3Model === 'string' ? args.level3Model.trim() : '',
-            level3Mode: ['auto', 'executor', 'agent'].includes(args.level3Mode) ? args.level3Mode : '',
+            level3Mode: ['auto', 'executor', 'agent', 'off'].includes(args.level3Mode) ? args.level3Mode : '',
           }
           // No values = adopt whatever /pipe-config already set (the user may have
           // copied a command from the message and run it themselves).
           if (requested.level2Model && l2.source === 'llm' && !l2.models.some((m) => m.id === requested.level2Model)) {
             warnings.push(`level2Model "${requested.level2Model}" 不在当前 llm 列表里，已按自定义值写入。`)
           }
-          if (requested.level3Model && l3.source === 'engine' && !l3.models.some((m) => m.id === requested.level3Model)) {
-            warnings.push(`level3Model "${requested.level3Model}" 不在本机 /models 列表里，已按自定义值写入。`)
+          if (requested.level3Mode === 'off') {
+            // v124 — explicit two-tier switch: write the mode, skip every model/pairing step.
+            set('level3Mode', 'off', cfg.level3Mode)
+            warnings.push('三级已关闭（level3Mode=off）：二级负责人自己写代码，完成后 pipeline_register_output 登记；恢复用 /pipe-config level3Mode auto。')
+          } else {
+            if (requested.level3Model && l3.source === 'engine' && !l3.models.some((m) => m.id === requested.level3Model)) {
+              warnings.push(`level3Model "${requested.level3Model}" 不在本机 /models 列表里，已按自定义值写入。`)
+            }
+            set('level3Model', requested.level3Model, cfg.level3Model)
+            set('level3Mode', requested.level3Mode, cfg.level3Mode)
+            if (requested.level3Model) {
+              const pairNotes = await autoPairAfterConfig(
+                ctx,
+                cfg,
+                requested.level3Mode ? ['level3Model', 'level3Mode'] : ['level3Model'],
+              )
+              warnings.push(...pairNotes)
+            }
           }
           // v122 — carry the provider with the model. A model id is only valid on
           // the providers that advertise it; letting `qwen3.7-plus` ride on
@@ -156,16 +179,6 @@ export function makeModelSetupTool(ctx, cfg, r) {
           }
           set('level2Model', requested.level2Model, cfg.level2Model)
           set('level2Provider', requested.level2Provider, cfg.level2Provider)
-          set('level3Model', requested.level3Model, cfg.level3Model)
-          set('level3Mode', requested.level3Mode, cfg.level3Mode)
-          if (requested.level3Model) {
-            const pairNotes = await autoPairAfterConfig(
-              ctx,
-              cfg,
-              requested.level3Mode ? ['level3Model', 'level3Mode'] : ['level3Model'],
-            )
-            warnings.push(...pairNotes)
-          }
         }
         // Same sweet-spot contract as /pipe-config level2Model.
         if (patch.level2Model && cfg.autoTuneSweetSpot !== false) {
@@ -212,7 +225,7 @@ export function makeModelSetupTool(ctx, cfg, r) {
         sources: { l2: l2.source, l3: l3.source },
         errors: [...l2.errors, ...l3.errors],
         warnings,
-        question: buildModelSetupQuestion({ defaults }),
+        question: buildModelSetupQuestion({ defaults, level3Mode: cfg.level3Mode }),
         message,
         next: applied
           ? '模型已定。继续需求访谈，然后 pipeline_lock_requirements。'
@@ -268,7 +281,7 @@ export function makeLockTool(ctx, cfg, r) {
       const setup = loadModelSetup(r.stateDir)
       let modelSetupHint = null
       if (!setup.confirmed) {
-        modelSetupHint = 'MODEL SETUP (once per project, before the run): call pipeline_model_setup, paste its `message` to the user VERBATIM (every locally available L2/L3 model with copyable /pipe-config commands), then ask its `question` via ask_user_question. If the user does not choose, call pipeline_model_setup({apply:"defaults"}) (L2 flash, L3 local #1).'
+        modelSetupHint = 'MODEL SETUP (once per project, before the run): call pipeline_model_setup, paste its `message` to the user VERBATIM (every locally available L2/L3 model with copyable /pipe-config commands), then ask its `question` via ask_user_question. If the user does not choose, call pipeline_model_setup({apply:"defaults"}) (L2 flash, L3 local #1). To drop the executor tier entirely (two-tier L1+L2), apply custom with level3Mode:"off".'
       }
       // v119 — a new run must not inherit the previous run's L2s. They used to
       // stay `in_progress` forever and keep appearing in pipeline_status's
@@ -973,7 +986,10 @@ export function makeSelftestTool(ctx, cfg, r) {
       let engineOk = false
       let engineDetail = '未配置 level3Endpoint'
       let engineName = 'L3 engine'
-      if (l3Mode === 'agent') {
+      if (l3Mode === 'off') {
+        // v124 — two-tier mode is a deliberate state, not a degradation.
+        add('L3 disabled', true, 'level3Mode=off：三级执行器已关闭，二级负责人直写代码（恢复：/pipe-config level3Mode auto）')
+      } else if (l3Mode === 'agent') {
         engineName = 'L3 agent provider'
         const probe = await resolveModelProvider(ctx, { provider: cfg.level3Provider, model: cfg.level3Model })
         engineOk = probe.skipped === true || probe.ok === true
@@ -998,7 +1014,8 @@ export function makeSelftestTool(ctx, cfg, r) {
           engineDetail = `不可达：${err?.message ?? err}（本地引擎不可用时会自动降级为 L2 直写）`
         }
       }
-      add(engineName, engineOk, engineDetail)
+      // v124 — the off branch already added its own check; never probe the tier.
+      if (l3Mode !== 'off') add(engineName, engineOk, engineDetail)
       const degraded = checks.filter((c) => !c.ok).map((c) => c.name)
       // v112 (B15) — `ok` used to be false whenever the optional L3 engine was
       // missing, which read as "the plugin is broken". `ready` is the real

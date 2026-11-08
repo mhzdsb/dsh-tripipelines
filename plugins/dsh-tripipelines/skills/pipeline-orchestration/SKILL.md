@@ -98,6 +98,11 @@ If SKIP: recommend single-agent mode + /pipe-config mode off.
   needs a provider-served model (`/pipe-config level3Model <id> mode=agent`, provider auto-pairs);
   `executor` rejects pipeline_spawn_local_executor, `agent` rejects execute_local/batch. A cloud
   L3 model must run in agent mode — it has no local endpoint.
+- L3 OFF (v124): `/pipe-config level3Mode off` switches to two-tier (L1+L2 only). The user may ask
+  for this directly ("关掉三级"/"只用一级二级"). L2 leads then write ALL their code themselves:
+  execute_local/batch/spawn_local_executor are refused, and decompose still works (the lead executes
+  its own subtasks + pipeline_register_output + pipeline_review). Keep planning/spawning/accepting as
+  usual; do not re-enable L3 on your own — only the user flips it back (`level3Mode auto`).
 - Several L3 subtasks → ONE pipeline_execute_batch (serial, one reasoning step), not N
   pipeline_execute_local calls; each item may carry its own filePath.
 - Acceptance is written per task by the DISPATCHING agent: L1 writes each module's own; L2 writes

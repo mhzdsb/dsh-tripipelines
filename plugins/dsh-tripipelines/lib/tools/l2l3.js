@@ -210,7 +210,7 @@ export function makeExecuteLocalTool(ctx, cfg, r) {
   return {
     name: 'pipeline_execute_local',
     description:
-      'Run ONE tiny subtask on the L3 engine over HTTP (text in, JSON out). Use when level3Mode=auto/executor; level3Mode=agent rejects it (use pipeline_spawn_local_executor). With filePath the plugin writes the file and returns path/lines/sha8 instead of the code.',
+      'Run ONE tiny subtask on the L3 engine over HTTP (text in, JSON out). Use when level3Mode=auto/executor; level3Mode=agent rejects it (use pipeline_spawn_local_executor), level3Mode=off rejects it (write the subtask yourself + pipeline_register_output). With filePath the plugin writes the file and returns path/lines/sha8 instead of the code.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -270,6 +270,14 @@ function makeSubtask(spec, fallbackId) {
 // Execute ONE Level-3 subtask: budget guard -> compressed prompt -> OpenAI call ->
 // JSON parse -> retry / escalation / bookkeeping. Shared by local + batch.
 async function executeOneL3Task(subtask, cfg, r, exec) {
+  // v124 — level3Mode=off: the executor tier is switched off by the user. The L2
+  // lead writes the subtask itself (read/write/edit + pipeline_register_output).
+  if (cfg.level3Mode === 'off') {
+    subtask.state = 'failed'
+    subtask.reason = '三级已关闭（level3Mode=off）：本任务由你（二级负责人）自己完成；完成后用 pipeline_register_output 登记。要恢复三级就 /pipe-config level3Mode auto'
+    r.record('level3_local', 'failed', 'task_result', LEVEL2_NAMES[0], subtask.id, subtask.desc, subtask.reason, subtask.acceptance)
+    return { ok: false, blocked: true, l3Disabled: true, subtaskId: subtask.id, reason: subtask.reason }
+  }
   if (cfg.level3Mode === 'agent') {
     subtask.state = 'failed'
     subtask.reason = 'L3 当前是 agent 模式（level3Mode=agent）：改用 pipeline_spawn_local_executor；要切回一次性执行器就 /pipe-config level3Mode executor'
@@ -668,7 +676,7 @@ export function makeReviewTool(ctx, cfg, r) {
 export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
   return {
     name: 'pipeline_spawn_local_executor',
-    description: 'Spawn a one-shot L3 executor as a DSH subagent (level3Mode=auto/agent; a cloud L3 model must use this path). level3Mode=executor rejects it.',
+    description: 'Spawn a one-shot L3 executor as a DSH subagent (level3Mode=auto/agent; a cloud L3 model must use this path). level3Mode=executor rejects it; level3Mode=off rejects it (write the subtask yourself + pipeline_register_output).',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -683,6 +691,10 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
     async execute(args, exec) {
       const subs = ctx.get ? ctx.get('subagents') : undefined
       if (!subs || typeof subs.startActivation !== 'function') throw new Error('subagents service is unavailable')
+      // v124 — the executor tier is off: refuse before any spawn/pairing work.
+      if (cfg.level3Mode === 'off') {
+        throw new Error('三级已关闭（level3Mode=off）：这个子任务由你（二级负责人）自己完成，用 read/write/edit 写文件后 pipeline_register_output 登记；要恢复三级就 /pipe-config level3Mode auto')
+      }
       if (cfg.level3Mode === 'executor') {
         throw new Error('L3 当前是 executor 模式（level3Mode=executor）：用 pipeline_execute_local / pipeline_execute_batch；要改用云端 agent 模式就 /pipe-config level3Mode agent')
       }
