@@ -174,10 +174,17 @@ export function measureLevel1Context(ctx, source, cfg) {
       totalTokens = hit.tokens
       source2 = hit.source
     } else {
+      // v126 — prefer the LIVE host reading over the cache. The board polls every
+      // 2.5s; a cached value would freeze the card's tick between tool calls and
+      // hide compression-driven swings that the user needs to see. Cache is the
+      // fallback for when measure() transiently fails (released session etc).
       const measured = measurePressure(session, meter)
       if (measured != null) {
         totalTokens = measured
         source2 = 'tokenMeter.measure'
+      } else if (hit && now - hit.at < METER_TTL_MS) {
+        totalTokens = hit.tokens
+        source2 = hit.source
       } else if (typeof meter.estimateMessage === 'function') {
         totalTokens = tailSurfaceTokens(session, meter)
         source2 = 'tail40'

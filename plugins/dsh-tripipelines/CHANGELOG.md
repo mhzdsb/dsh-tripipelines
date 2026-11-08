@@ -2,6 +2,23 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v126 — 1.30.0（看板负载条说实话：单条填充 + 测/估徽章，三区渐变退役）
+
+### 变更
+- **看板 meter 重做**：v97b 的「绿黄红三区固定渐变 + 白色指针」暗示指针是窗口内的精确位置，但宿主 `tokenMeter.measure()` 给的是**请求压力口径**——装了压缩代理（ACP/billion-context 这类）后它与实际计费上下文并不是一回事，三区+指针是在表演精确。现改为**单条填充**：填充色随读数落在甜点区前/甜点~危险线/危险线后来取绿/黄/红，阈值数值收进悬浮 tooltip（`当前 X／甜点 Y／危险线 Z／窗口 W`），不再画分区界线和假刻度。
+- **来源徽章**：每条读数右侧新增 `测`（宿主 tokenMeter 实测）/ `估`（tail-40 估算、缓存回落或 spawn 足迹）小徽章；L1 读数由 `/pipeline/board` 快照携带 `source`/`approximate` 字段（buildBoardSnapshot/idleBoardSnapshot 同步扩形），L2 沿用 `measured` 真值并把原 `· 估` 文字后缀升级为同款徽章。tooltip 明写「装了压缩代理时可能与实际计费口径不同」。
+- **测量不再吃缓存旧值**：`measureLevel1Context` 优先实时 `measure()`，仅当瞬时失败才回落到 TTL 缓存（此前 2.5s 轮询大部分命中缓存，卡片刻度在两次工具调用之间是冻住的）；plugin.js 工具包装层写 store 时同样带上 `level1Source/level1Approximate`（此前只写数字，把 tail40 估算洗白成"无标注读数"）。
+- L1 尚无读数时不显示徽章（不拿 `估` 冒充有数据）；待验收行、折叠 rail、工作区切换等其余卡面行为不变。功能没有取消——只是把不能保证准确的部分降级为诚实的近似显示，并保留全部信息量。
+
+### 测试
+- v92 看板套件 +7 断言：context.level1 默认 source=null / tail40 provenance 透传 / level2.measured 聚合 / live lead 缓存 tokens / client 含测·估徽章 / 三区渐变 track 已删除 / 甜点·危险线只存在于 tooltip。dev/smoke 与 test/smoke 双副本锚点统一（root 回退逻辑同 v125 模式）。
+- 全套 19 套件 `npm test` 全绿。
+
+### 文档
+- README / README.en.md：ASCII 看板示意行改为 `41K/64K 测` / `63K/32K 估` 样式，GUI 看板特性行说明测/估徽章与变色语义；config.js 两个 ContextWindow 键描述去掉"用于显示分区"旧词。
+
+版本 1.29.0 → 1.30.0（行为变化：侧栏负载条不再假装精确——单填充+变色、阈值进 tooltip、读数以 测/估 徽章标明来源；L1 刻度改为实时测量不再冻在缓存上）。
+
 ## v125 — 1.29.0（市场就绪：测试随包发布、双门合一、看板脱敏、文档英文入口）
 
 ### 变更

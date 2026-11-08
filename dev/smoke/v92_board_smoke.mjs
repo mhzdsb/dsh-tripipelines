@@ -7,7 +7,11 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
-const root = new URL('../../', import.meta.url)
+const pkgRoot = new URL('../../', import.meta.url)
+// v125 — the suite ships inside the package (test/smoke). In this repo's monorepo
+// layout dev/smoke holds a copy whose ../../ is the REPO root; fall back to it so
+// both copies run unchanged from either location.
+const root = existsSync(new URL('lib/util.js', pkgRoot)) ? pkgRoot : new URL('../../plugins/dsh-tripipelines/', import.meta.url)
 const tmp = mkdtempSync(join(tmpdir(), 'v92-board-'))
 let failed = 0
 const check = (label, cond, extra) => {
@@ -19,21 +23,21 @@ const check = (label, cond, extra) => {
 }
 
 const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js']
-for (const f of flat) copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
+for (const f of flat) copyFileSync(new URL('lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
-for (const f of ['l1.js', 'l2l3.js']) copyFileSync(new URL('plugins/dsh-tripipelines/lib/tools/' + f, root), join(tmp, 'tools', f))
+for (const f of ['l1.js', 'l2l3.js']) copyFileSync(new URL('lib/tools/' + f, root), join(tmp, 'tools', f))
 
-const cfgSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', root), 'utf8').replace(
+const cfgSrc = readFileSync(new URL('lib/config.js', root), 'utf8').replace(
   "export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')",
   `export const CONFIG_FILE = ${JSON.stringify(join(tmp, 'config.json').replace(/\\/g, '/'))}`,
 )
 writeFileSync(join(tmp, 'config.js'), cfgSrc, 'utf8')
-const stSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8').replace(
+const stSrc = readFileSync(new URL('lib/store.js', root), 'utf8').replace(
   "return join(base, '.dsh', 'pipeline')",
   `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
 )
 writeFileSync(join(tmp, 'store.js'), stSrc, 'utf8')
-copyFileSync(new URL('plugins/dsh-tripipelines/lib/plugin.js', root), join(tmp, 'plugin.js'))
+copyFileSync(new URL('lib/plugin.js', root), join(tmp, 'plugin.js'))
 
 const imp = (rel) => import(pathToFileURL(join(tmp, rel)).href)
 const cfgMod = await imp('config.js')
@@ -76,6 +80,18 @@ check('l2 agent with scopeDir', snap.agents.length === 1 && snap.agents[0].scope
 check('budget maxTokens from cfg', snap.budget.maxTokens === Number(cfg.maxTotalTokensPerRun))
 check('budget tokensUsed', snap.budget.tokensUsed === 1234)
 check('recent event type', snap.recentEvents.length === 1 && snap.recentEvents[0].type === 'agent_spawn')
+
+// v126 — context provenance ships with the reading so the GUI can badge 测/估.
+check('level1 source defaults to null when unmeasured', snap.context.level1.source === null && snap.context.level1.approximate === false)
+r.store.context = { ...(r.store.context || {}), level1Tokens: 5000, level1Source: 'tail40', level1Approximate: true }
+const snapProv = board.buildBoardSnapshot(r, cfg)
+check('level1 carries tail40 provenance', snapProv.context.level1.source === 'tail40' && snapProv.context.level1.approximate === true)
+check('level2 measured flag reflects live leads', snapProv.context.level2.measured === false)
+r.store.agents.set('c2', { id: 'c2', kind: 'l2', label: 'front', state: 'in_progress', estimatedTokens: 10 })
+const snapLive = board.buildBoardSnapshot(r, cfg, (id) => (id === 'c2' ? 4321 : undefined))
+check('live lead paints measured + caches tokens', snapLive.context.level2.measured === true && snapLive.agents.find((a) => a.id === 'c2').measured === true)
+delete r.store.context.level1Source
+delete r.store.context.level1Approximate
 
 // ---------------------------------------------------------------------------
 // 2. route registration + handler
@@ -176,7 +192,7 @@ check('default scope dir created', existsSync(resolve(tmp, 'proj', '.dsh', 'pipe
 // ---------------------------------------------------------------------------
 // 4. client bundle wiring (static)
 // ---------------------------------------------------------------------------
-const clientSrc = readFileSync(new URL('plugins/dsh-tripipelines/client.js', root), 'utf8')
+const clientSrc = readFileSync(new URL('client.js', root), 'utf8')
 check('client loader declares package id', clientSrc.includes("id: 'dsh-tripipelines'"))
 check('client registers sidebar.footer.action', clientSrc.includes("'sidebar.footer.action'"))
 check('client keeps a single board id (no probes)', !clientSrc.includes('pipeline-probe') && (clientSrc.match(/'pipeline-board'/g) || []).length === 1)
@@ -184,16 +200,20 @@ check('client has exactly one seat (no composer strip, no floating card)', !clie
 check('client polls /pipeline/board', clientSrc.includes("'/pipeline/board'") && clientSrc.includes('workspace='))
 check('client keeps an idle posture', clientSrc.includes("=== 'idle'"))
 check('client uses theme tokens', clientSrc.includes('--dsw-alias-'))
-const pkg = JSON.parse(readFileSync(new URL('plugins/dsh-tripipelines/package.json', root), 'utf8'))
+// v126 — the meter is honest: single fill + provenance badge, no zone theatre.
+check('client badges measured vs estimated readings', clientSrc.includes("'测'") && clientSrc.includes("'估'"))
+check('client dropped the three-zone gradient track', !clientSrc.includes('linear-gradient(to right, rgba(52,211,153,.88) 0'))
+check('client keeps sweet/danger thresholds in tooltips only', clientSrc.includes('甜点') && clientSrc.includes('危险线') && !clientSrc.includes('sweetPct'))
+const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 check('package.json exports ./client', pkg.exports?.['./client'] === './client.js')
 check('package.json ships client.js', Array.isArray(pkg.files) && pkg.files.includes('client.js'))
 check('package.json declares dsh.client', pkg.dsh?.client?.platform === 'web' && pkg.dsh?.client?.immediately === true)
-const pluginMainSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/plugin.js', root), 'utf8')
+const pluginMainSrc = readFileSync(new URL('lib/plugin.js', root), 'utf8')
 check('plugin creates per-workspace stores (v103)', pluginMainSrc.includes('createWorkspaceRegistry'))
-check('route handler has a build tag', readFileSync(new URL('plugins/dsh-tripipelines/lib/board-route.js', root), 'utf8').includes('BUILD_TAG'))
+check('route handler has a build tag', readFileSync(new URL('lib/board-route.js', root), 'utf8').includes('BUILD_TAG'))
 // v96 — module-count nudges: soft hints on plan + spawn, and a sizing guide in the skill.
-const l1Src = readFileSync(new URL('plugins/dsh-tripipelines/lib/tools/l1.js', root), 'utf8')
-const skillSrc = readFileSync(new URL('plugins/dsh-tripipelines/skills/pipeline-orchestration/SKILL.md', root), 'utf8')
+const l1Src = readFileSync(new URL('lib/tools/l1.js', root), 'utf8')
+const skillSrc = readFileSync(new URL('skills/pipeline-orchestration/SKILL.md', root), 'utf8')
 check('plan returns a module-count hint', l1Src.includes('planHint'))
 check('plan hint targets collapsed plans', l1Src.includes('tasks.length >= 3') && l1Src.includes('assignees.length === 1'))
 check('spawn returns an unspawned-module hint', l1Src.includes('spawnHint'))
@@ -203,8 +223,8 @@ check('skill keeps the single-file fast path', skillSrc.includes('single-file') 
 
 // v101c — context readout must use surfaceTokens (what the model sees), never the
 // cumulative session-log total; otherwise the strip shows absurd ratios like 3290%.
-const brSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/board-route.js', root), 'utf8')
-const compatSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/dsh-compat.js', root), 'utf8')
+const brSrc = readFileSync(new URL('lib/board-route.js', root), 'utf8')
+const compatSrc = readFileSync(new URL('lib/dsh-compat.js', root), 'utf8')
 check('agent token read prefers surfaceTokens', brSrc.includes('measurement?.surfaceTokens ?? measurement?.totalTokens'))
 check('level1 read uses the tail-window estimate', compatSrc.includes('tailSurfaceTokens') && !compatSrc.includes('m.surfaceTokens ?? m.totalTokens'))
 const { measureAgentTokens } = await imp('board-route.js')

@@ -256,7 +256,7 @@ window.__ModuleLoader__.load({
       const detail = [
         `run: ${run.id || '(none)'} · ${STATUS_LABEL[run.status] || run.status}${paused ? `（${run.pauseReason || '已暂停'}）` : ''}`,
         `工作区: ${wsName || picked || cwd || '(host default)'}`,
-        `甜点区: L1 ${fmtCount(snap.context?.level1?.tokens)}/${fmtCount(snap.context?.level1?.budget)} · L2 ${fmtCount(snap.context?.level2?.tokens)}/${fmtCount(snap.context?.level2?.budget)}`,
+        `甜点区: L1 ${fmtCount(snap.context?.level1?.tokens)}/${fmtCount(snap.context?.level1?.budget)}（${snap.context?.level1?.source === 'tokenMeter.measure' ? '实测' : '估算'}） · L2 ${fmtCount(snap.context?.level2?.tokens)}/${fmtCount(snap.context?.level2?.budget)}（${snap.context?.level2?.measured ? '实测' : '估算'}）`,
         ...milestones.map((m) => `· ${m.name}: ${m.state} (${m.done}/${m.total})`),
         ...agents.map((a) => `· L2 ${a.label}: ${a.state}${a.scopeDir ? ` @ ${a.scopeDir}` : ''}`),
         ...events.map((e) => `· ${e.type}: ${e.text}`),
@@ -290,13 +290,14 @@ window.__ModuleLoader__.load({
         if (Number(budget) > 0 && Number(tokens) >= Number(budget)) return C.warn
         return C.ok
       }
-      // v97b — the bar is three fixed zones across the whole model window:
-      //   green  = sweet spot         (0    → sweet budget)
-      //   amber  = transition headroom(sweet→ danger line)
-      //   red    = capability collapse(danger → window)
-      // Zone colours never change; the current reading is a white tick on top, so it
-      // stays readable inside whichever zone it sits in.
-      const meter = (label, tokens, budget, color, key, finished, finishLabel, top, barH, caption, danger, contextWindow) => {
+      // v126 — honest meter. The old three-zone gradient implied the white tick was
+      // an exact position inside a known window; with compression proxies (ACP) in
+      // play the host reading is request pressure, not post-fold billed context, so
+      // that precision was theatre. New shape: one fill coloured by where it sits
+      // relative to sweet/danger (colours unchanged), no tick pretending to be exact,
+      // and a provenance badge — 测 = host measurement, 估 = estimate or stale cache.
+      // Thresholds stay in the tooltip instead of eating card width.
+      const meter = (label, tokens, budget, color, key, finished, finishLabel, top, barH, caption, danger, contextWindow, badge) => {
         const cap = Number(budget) || 0
         const used = Number(tokens) || 0
         const lim = Number(danger) > 0 ? Number(danger) : 0
@@ -305,16 +306,11 @@ window.__ModuleLoader__.load({
         const pct = finished ? 100 : Math.max(0, Math.min(100, Math.round((bas > 0 ? used / bas : 0) * 100)))
         const inDanger = lim > 0 && used >= lim
         const inWarn = cap > 0 && used >= cap && !inDanger
-        const sweetPct = bas > 0 && cap > 0 ? Math.max(3, Math.min(97, Math.round((cap / bas) * 100))) : 30
-        const dangerPct = bas > 0 && lim > 0 ? Math.max(sweetPct + 2, Math.min(99, Math.round((lim / bas) * 100))) : 97
-        const track = finished
-          ? C.done
-          : `linear-gradient(to right, rgba(52,211,153,.88) 0 ${sweetPct}%, rgba(251,191,36,.90) ${sweetPct}% ${dangerPct}%, rgba(248,81,73,.92) ${dangerPct}% 100%)`
+        const fillColor = finished ? C.done : inDanger ? 'rgba(248,81,73,.92)' : inWarn ? 'rgba(251,191,36,.90)' : 'rgba(52,211,153,.88)'
         const valueColor = finished ? C.done : inDanger ? C.error : inWarn ? C.warn : C.text
-        const titleText =
-          lim > 0
-            ? `${label}｜甜点 ${fmtCount(cap)}｜危险线 ${fmtCount(lim)}｜窗口 ${fmtCount(win)}（红区=能力打折）`
-            : label
+        const titleText = lim > 0
+          ? `${label}｜当前 ${fmtCount(used)}／甜点 ${fmtCount(cap)}／危险线 ${fmtCount(lim)}／窗口 ${fmtCount(win)}（红区=能力打折）· ${badge === '测' ? '宿主实测的请求压力；装了压缩代理时可能与实际计费口径不同' : '估算值，仅供趋势参考'}`
+          : label
         return h(
           'div',
           { key, style: { display: 'flex', flexDirection: 'column', gap: 3, marginTop: top ?? 6 } },
@@ -355,6 +351,25 @@ window.__ModuleLoader__.load({
                   },
                   cap > 0 ? `${pct}%` : '—',
                 ),
+            // Provenance badge sits right of the percent so 测/估 never wraps.
+            !finished && badge
+              ? h(
+                  'span',
+                  {
+                    style: {
+                      color: badge === '测' ? C.ok : C.warn,
+                      flex: 'none',
+                      fontSize: 9.5,
+                      lineHeight: '14px',
+                      padding: '0 3px',
+                      borderRadius: 3,
+                      background: badge === '测' ? 'rgba(52,211,153,.12)' : 'rgba(251,191,36,.14)',
+                    },
+                    title: badge === '测' ? '宿主 tokenMeter 实测（请求压力口径）' : '估算读数（尾部窗口或缓存），不是精确占用',
+                  },
+                  badge,
+                )
+              : null,
           ),
           h(
             'div',
@@ -363,37 +378,24 @@ window.__ModuleLoader__.load({
                 position: 'relative',
                 height: barH ?? 4,
                 borderRadius: 99,
-                background: track,
+                background: 'rgba(255,255,255,.08)',
                 overflow: 'hidden',
               },
             },
-            // Zone boundaries: sweet line (green→amber) and danger line (amber→red).
-            cap > 0 && sweetPct < 96
-              ? h('div', {
-                  style: { position: 'absolute', left: `${sweetPct}%`, top: 0, bottom: 0, width: 1, background: 'rgba(0,0,0,.55)' },
-                })
-              : null,
-            lim > 0 && dangerPct < 96 && dangerPct > sweetPct + 1
-              ? h('div', {
-                  style: { position: 'absolute', left: `${dangerPct}%`, top: 0, bottom: 0, width: 1, background: 'rgba(0,0,0,.55)' },
-                })
-              : null,
-            // Current reading: a bright tick, not a re-coloured fill, so the three
-            // zone colours stay visible.
-            !finished && pct > 0
-              ? h('div', {
-                  style: {
-                    position: 'absolute',
-                    left: `calc(${pct}% - 1px)`,
-                    top: -1,
-                    bottom: -1,
-                    width: 2,
-                    borderRadius: 1,
-                    background: 'rgba(255,255,255,.95)',
-                    boxShadow: '0 0 2px rgba(0,0,0,.7)',
-                  },
-                })
-              : null,
+            // Single fill: green until the sweet spot, amber through the headroom,
+            // red past the danger line. No zone boundaries painted — they were the
+            // part that implied false precision.
+            h('div', {
+              style: {
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: `${pct}%`,
+                borderRadius: 99,
+                background: fillColor,
+              },
+            }),
           ),
         )
       }
@@ -535,6 +537,13 @@ window.__ModuleLoader__.load({
           null,
           l1spot.danger,
           l1spot.window,
+          // v126 — badge from the provenance the server now ships. No reading yet
+          // (source=null && tokens=0) shows nothing rather than a fake 估.
+          l1spot.source === 'tokenMeter.measure'
+            ? '测'
+            : l1spot.approximate || l1spot.tokens > 0
+              ? '估'
+              : null,
         ),
         // Every lead gets a row — a finished one keeps its (blue, full) bar and says
         // 已完成/已结束 on the right, so the card still shows who worked when a run ends.
@@ -558,9 +567,8 @@ window.__ModuleLoader__.load({
                 const live = a.measured === true
                 const measured = typeof a.tokens === 'number' && a.tokens > 0
                 const usedTokens = measured ? a.tokens : Number(a.estimatedTokens) || 0
-                const estimateTag = !live && !finished ? ' · 估' : ''
                 return meter(
-                  `L2 ${a.label} · ${shortModel(a.model || models.level2)}${estimateTag}`,
+                  `L2 ${a.label} · ${shortModel(a.model || models.level2)}`,
                   usedTokens,
                   l2spot.budget,
                   failed ? C.error : live ? spotColor(usedTokens, l2spot.budget, l2spot.danger) : C.sub,
@@ -572,9 +580,11 @@ window.__ModuleLoader__.load({
                   null,
                   l2spot.danger,
                   l2spot.window,
+                  // v126 — the old ' · 估' label suffix becomes the same badge as L1's.
+                  live ? '测' : '估',
                 )
               })
-          : [meter('L2', 0, l2spot.budget, C.idle, 'l2-none', false, null, 9, 3, null, l2spot.danger, l2spot.window)]),
+          : [meter('L2', 0, l2spot.budget, C.idle, 'l2-none', false, null, 9, 3, null, l2spot.danger, l2spot.window, null)]),
         agents.length > 4
           ? h(
               'div',

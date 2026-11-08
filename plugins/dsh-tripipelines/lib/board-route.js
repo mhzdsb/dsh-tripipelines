@@ -8,7 +8,7 @@ import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v125'
+const BUILD_TAG = 'v126'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -132,6 +132,13 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
         // Past the danger line the model's effective capability degrades hard.
         danger: Number(cfg?.level1DangerBudget) || 0,
         window: Number(cfg?.level1ContextWindow) || 0,
+        // v126 — how the current reading was obtained. 'tokenMeter.measure' =
+        // host-measured request pressure; 'tail40' = heuristic estimate of the
+        // live window; null = not measured yet. approximate=true whenever the
+        // number is not a direct host measurement, so the GUI can badge it (估)
+        // instead of painting an estimate as an exact sweet-spot position.
+        source: store.context?.level1Source ?? null,
+        approximate: store.context?.level1Approximate === true,
       },
       level2: {
         tokens: agents.length
@@ -140,6 +147,8 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
         budget: Number(cfg?.level2ContextBudget) || 0,
         danger: Number(cfg?.level2DangerBudget) || 0,
         window: Number(cfg?.level2ContextWindow) || 0,
+        // v126 — true when at least one lead's number comes from the host meter.
+        measured: agents.some((a) => a.measured === true),
       },
     },
     recentEvents: store.messages.slice(-6).map((m) => ({
@@ -187,12 +196,15 @@ export function idleBoardSnapshot(cfg, stores, debugRequested = true) {
         budget: num(cfg?.level1ContextBudget),
         danger: num(cfg?.level1DangerBudget),
         window: num(cfg?.level1ContextWindow),
+        source: null,
+        approximate: false,
       },
       level2: {
         tokens: 0,
         budget: num(cfg?.level2ContextBudget),
         danger: num(cfg?.level2DangerBudget),
         window: num(cfg?.level2ContextWindow),
+        measured: false,
       },
     },
     recentEvents: [],
@@ -268,11 +280,18 @@ export function installBoardRoute(ctx, source, cfg) {
               // best-effort — fall through with the in-memory store
             }
             // Refresh the L1 reading on every poll (local meter, zero tokens).
+            // v126 — keep the provenance alongside the number so the GUI can tell
+            // a host measurement from the tail-40 estimate.
             try {
               const src = r.lastSession ? { session: r.lastSession } : undefined
               const m = measureLevel1Context(ctx, src, cfg)
               if (m && typeof m.totalTokens === 'number') {
-                r.store.context = { ...(r.store.context || {}), level1Tokens: m.totalTokens }
+                r.store.context = {
+                  ...(r.store.context || {}),
+                  level1Tokens: m.totalTokens,
+                  level1Source: m.source ?? null,
+                  level1Approximate: m.approximate === true,
+                }
               }
             } catch {
               // best-effort — keep the cached reading

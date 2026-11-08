@@ -216,7 +216,15 @@ function apply(ctx, config) {
         try {
           const m = measureLevel1Context(ctx, exec, cfg)
           if (m && typeof m.totalTokens === 'number') {
-            entry.r.store.context = { ...(entry.r.store.context || {}), level1Tokens: m.totalTokens }
+            entry.r.store.context = {
+              ...(entry.r.store.context || {}),
+              level1Tokens: m.totalTokens,
+              // v126 — provenance travels with the number (估 badge on the card).
+              // The tool wrapper used to drop it here, so a tail40 estimate was
+              // repainted as an exact host measurement by the next board poll.
+              level1Source: m.source ?? null,
+              level1Approximate: m.approximate === true,
+            }
           }
         } catch { /* best-effort */ }
         const target = entry.tools.get(t.name)

@@ -7,7 +7,11 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
-const root = new URL('../../', import.meta.url)
+const pkgRoot = new URL('../../', import.meta.url)
+// v125 — the suite ships inside the package (test/smoke). In this repo's monorepo
+// layout dev/smoke holds a copy whose ../../ is the REPO root; fall back to it so
+// both copies run unchanged from either location.
+const root = existsSync(new URL('lib/util.js', pkgRoot)) ? pkgRoot : new URL('../../plugins/dsh-tripipelines/', import.meta.url)
 const tmp = mkdtempSync(join(tmpdir(), 'v92-board-'))
 let failed = 0
 const check = (label, cond, extra) => {
@@ -76,6 +80,18 @@ check('l2 agent with scopeDir', snap.agents.length === 1 && snap.agents[0].scope
 check('budget maxTokens from cfg', snap.budget.maxTokens === Number(cfg.maxTotalTokensPerRun))
 check('budget tokensUsed', snap.budget.tokensUsed === 1234)
 check('recent event type', snap.recentEvents.length === 1 && snap.recentEvents[0].type === 'agent_spawn')
+
+// v126 — context provenance ships with the reading so the GUI can badge 测/估.
+check('level1 source defaults to null when unmeasured', snap.context.level1.source === null && snap.context.level1.approximate === false)
+r.store.context = { ...(r.store.context || {}), level1Tokens: 5000, level1Source: 'tail40', level1Approximate: true }
+const snapProv = board.buildBoardSnapshot(r, cfg)
+check('level1 carries tail40 provenance', snapProv.context.level1.source === 'tail40' && snapProv.context.level1.approximate === true)
+check('level2 measured flag reflects live leads', snapProv.context.level2.measured === false)
+r.store.agents.set('c2', { id: 'c2', kind: 'l2', label: 'front', state: 'in_progress', estimatedTokens: 10 })
+const snapLive = board.buildBoardSnapshot(r, cfg, (id) => (id === 'c2' ? 4321 : undefined))
+check('live lead paints measured + caches tokens', snapLive.context.level2.measured === true && snapLive.agents.find((a) => a.id === 'c2').measured === true)
+delete r.store.context.level1Source
+delete r.store.context.level1Approximate
 
 // ---------------------------------------------------------------------------
 // 2. route registration + handler
@@ -184,6 +200,10 @@ check('client has exactly one seat (no composer strip, no floating card)', !clie
 check('client polls /pipeline/board', clientSrc.includes("'/pipeline/board'") && clientSrc.includes('workspace='))
 check('client keeps an idle posture', clientSrc.includes("=== 'idle'"))
 check('client uses theme tokens', clientSrc.includes('--dsw-alias-'))
+// v126 — the meter is honest: single fill + provenance badge, no zone theatre.
+check('client badges measured vs estimated readings', clientSrc.includes("'测'") && clientSrc.includes("'估'"))
+check('client dropped the three-zone gradient track', !clientSrc.includes('linear-gradient(to right, rgba(52,211,153,.88) 0'))
+check('client keeps sweet/danger thresholds in tooltips only', clientSrc.includes('甜点') && clientSrc.includes('危险线') && !clientSrc.includes('sweetPct'))
 const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 check('package.json exports ./client', pkg.exports?.['./client'] === './client.js')
 check('package.json ships client.js', Array.isArray(pkg.files) && pkg.files.includes('client.js'))

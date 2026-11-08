@@ -16,7 +16,7 @@ user ──talks only to L1──▶ L1 (your chat model) ◀──reports/re-an
 ┌────────────── GUI board (sidebar card in the Web UI, polls every 2.5 s, invisible to models) ──────────────┐
 │ RUN run-1730… active    ▓▓▓▓▓▓░░  milestones 2/3 · tasks 7/9                                               │
 │ M1 skeleton+data ✔accepted   M2 API routes ●done awaiting acceptance   M3 frontend ○in progress           │
-│ L1 context ▓▓▓░░░ 41K/128K sweet spot     L2 api-auth ▓▓▓▓░ 63K/128K (qwen3.7-plus)                        │
+│ L1 context ▓▓▓░░░ 41K/64K measured       L2 api-auth ▓▓▓▓░ 63K/32K est (qwen3.7-plus)                       │
 │ L3 subtasks done 21 · failed 2 (retrying) · tokens 182K / budget 500K                                      │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -99,7 +99,7 @@ The main agent then walks the four phases — onboarding → requirement intervi
 | **Batched L3 execution** | `pipeline_execute_batch` submits N subtasks at once, serial inside, one return — saves N× inference tokens |
 | **Quality gate actually runs code** | assertions like `fn(args)==expected` really execute (JS/TS via node, Python via a controlled subprocess); **all assertions must pass**. File-shaped tasks use `cmd: <command>` integration checks at workspace root (v119, exit-code judged). Keyword scoring only as fallback |
 | **Report-on-exception + no polling** | L1/L2 never poll the board; push-based reporting slashes token burn |
-| **GUI board (v92/v94)** | a sidebar card in the Web UI, same family as the balance card: run status / milestones / per-tier sweet-spot bars (green-yellow-red) / active L2s and their models / token budget — invisible to models, always visible to you |
+| **GUI board (v92/v94)** | a sidebar card in the Web UI, same family as the balance card: run status / milestones / per-tier load bars (green→amber past the sweet spot, red past the danger line; `测`=host-measured, `估`=estimated — v126) / active L2s and their models / token budget — invisible to models, always visible to you |
 | **Isolated working dir per L2 (v92)** | `scopeDir` on `pipeline_spawn_module_lead` gives each lead a real `cwd`; parallel leads never step on files |
 | **Per-L2 model choice (v94)** | pass `provider` / `model` per lead — throw a stronger model at the hard module, keep the rest cheap |
 | **Milestone state machine** | done → acceptance dialog → persisted; unaccepted blocks advance; cold-start auto-restores |
