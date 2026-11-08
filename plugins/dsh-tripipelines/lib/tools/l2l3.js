@@ -337,7 +337,7 @@ async function executeOneL3Task(subtask, cfg, r, exec) {
     })
     if (!res.ok) {
       const body = await res.text()
-      throw new Error(`ninfer ${res.status}: ${body.slice(0, 400)}`)
+      throw new Error(`L3 引擎 ${res.status}: ${body.slice(0, 400)}`)
     }
     const data = await res.json()
     const choice = data.choices?.[0]
@@ -714,13 +714,19 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
       }
       if (pairingNote) r.record(LEVEL2_NAMES[0], 'in_progress', 'l3_pairing', 'level3_local', null, pairingNote, null, null)
 
-      // Concurrency limit: ninfer runs one generation at a time per slot, so the
-      // default is 1 (configurable via maxLevel3Concurrency).
+      // Concurrency limit: one generation at a time per slot by default
+      // (maxLevel3Concurrency). v125 — event-driven queue: waiters sleep on a
+      // shared notifier instead of re-polling every 200ms.
       const slots = numCfg(cfg, 'maxLevel3Concurrency', 1)
       const queueDeadline = Date.now() + 120000
+      if (!r.l3Queue) r.l3Queue = { notify: () => {} }
       while (r.store.l3Concurrent >= slots) {
         if (Date.now() > queueDeadline) throw new Error(`Level-3 concurrency queue timed out (${slots} slots busy)`)
-        await new Promise((res) => setTimeout(res, 200))
+        await new Promise((res) => {
+          const timer = setTimeout(res, Math.max(queueDeadline - Date.now(), 0) + 50)
+          const prev = r.l3Queue.notify
+          r.l3Queue.notify = () => { clearTimeout(timer); prev(); res() }
+        })
       }
       r.store.l3Concurrent++
       const timeoutMs = numCfg(cfg, 'level3TimeoutMs', 900000)
@@ -821,6 +827,8 @@ export function makeSpawnLocalExecutorTool(ctx, cfg, r) {
       } finally {
         clearTimeout(timer)
         r.store.l3Concurrent--
+        // v125 — wake one queued waiter now that a slot freed up.
+        try { r.l3Queue?.notify?.() } catch { /* best-effort */ }
       }
     },
   }

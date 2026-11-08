@@ -2,44 +2,46 @@
 
 > 不读长文档，跟着三步走。卡住了再看文末「常见问题」。
 
-## 第 0 步：前提（1 分钟）
+## 第 0 步：前提（30 秒）
 
-确认本地推理引擎活着（OpenAI 兼容，任选其一）：
+**什么都不用装、不用配。** 插件自带默认值，开工时它会贴出你机器上实际可用的模型清单让你挑（或直接回车用默认）。三级执行器有三条路，任选其一，也可以一个都不选：
+
+| 路线 | 前提 | 适合 |
+|---|---|---|
+| **A. 本地引擎（executor）** | 任意 OpenAI 兼容端点活着（llama.cpp / vLLM / Ollama / LM Studio / strata…），默认地址 `http://127.0.0.1:8080/v1` | 想省云端 token；碎活交给本地小模型 |
+| **B. 云端模型（agent）** | 无额外前提——复用 DSH 已配置的 LLM provider（含 Token Plan 等自定义 provider） | 没有本地引擎，又想三级分工 |
+| **C. 两级模式（off）** | 无额外前提 | 只想 L1 规划 + L2 写码，最简单 |
+
+验证 A 路引擎是否在线（可选）：
 
 ```bash
 curl http://127.0.0.1:8080/v1/models
 ```
 
-- 返回 `{"data":[{"id":"..."}]}` → 好了，记下模型 id。
-- 连不上 → 启动你的引擎（llama.cpp / vLLM / Ollama / strata 等），或先跳过：没有 L3 时，L2 仍可直写降级，效果打折但能用。
-
-如果引擎端口/模型名不是这个值，装好后用 `/pipe-config level3Endpoint <你的地址>` 与 `/pipe-config level3Model <模型 id>` 改。
-
-> v121 起，每个项目开工时 L1 会先调 `pipeline_model_setup`，贴出本机全部二级/三级模型与可复制的 `/pipe-config ...` 行；不选就用默认（L2 `deepseek-flash`，L3 本机 `/models` 第 1 个）。
->
-> v122 起，模型清单按 provider 分组；选别家 provider 的模型（如千问 Token Plan 的 `qwen3.7-plus`）时，清单会在组前给出配套的 `/pipe-config level2Provider <id>`。漏发也不会发错 API：派发前会自动纠正到正确的 provider，并在 `providerNote` 里说明；`pipeline_selftest` 也会报 `L2 model/provider` 不匹配。
->
-> v123 起更省事：`/pipe-config level2Model <id>` / `/pipe-config level3Model <id>` 只写模型名，命令会自动配套 provider。L3 也能用云端模型：`/pipe-config level3Model qwen3.7-plus mode=agent`（作为 DSH 子代理运行，不需要 `level3Endpoint`）；`mode=executor` 保持本地端点一次性执行，默认 `mode=auto` 按模型来源判断。
->
-> v124 起可以关掉三级：`/pipe-config level3Mode off` 后插件只用 L1+L2——一级照常规划验收，二级自己写代码（写完 `pipeline_register_output` 登记 + `pipeline_review` 过门）。恢复：`/pipe-config level3Mode auto`。
+- 返回 `{"data":[{"id":"..."}]}` → 好了，记下模型 id。端口/名字不同也没关系，开工清单里会按真实来源列出。
+- 连不上 → 完全没关系：选 B（把某个云端模型当 L3，`pipeline_model_setup` 会自动配对 provider）或选 C（关掉三级）。
 
 ## 第 1 步：装插件（1 分钟）
 
-二选一（`dsh-tripipelines-vNN` 是发布快照目录，`NN` 为迭代号）：
+**A. 插件市场 / npm（推荐）**：在 DSH 的插件页搜索 `dsh-tripipelines` 安装；或让主 agent 执行：
 
-**A. npm / market（发布后，推荐）**：在 DSH 的插件页搜索 `dsh-tripipelines` 安装，或让主 agent 执行：
+```
+plugin_manager install_bundle('dsh-tripipelines')
+```
+
+**B. 命令行**：
 
 ```bash
 dsh plugin --profile <profile> add dsh-tripipelines
 ```
 
-**B. 本地快照 / 开发（link 安装）**：
+**C. 本地快照 / 开发（link 安装）**：
 
 ```
-plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')
+plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines')
 ```
 
-> 装好后**新开一个会话**（或刷新页面），才能加载插件的提示词与工具。
+> 装好后**新开一个会话**（或刷新页面），才能加载插件的提示词与工具。升级同理：重装新版本后开新会话；正常发布流程不需要手动换目录（历史版本里的 `-vNN` 快照目录只是作者本机的开发手段）。
 
 ## 第 2 步：自检（30 秒）
 
@@ -52,14 +54,15 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')
 看到类似：
 
 ```
-subagents service   OK
-startActivation     OK
-drainChildren       OK
-llm service         OK
-L3 engine           OK (http://127.0.0.1:18200/v1, model qwen3.8-...)
+subagents service      OK
+startActivation        OK
+drainChildren          OK
+llm service            OK (level2 qwen-token-plan-cn/qwen3.7-plus)
+L2 model/provider      OK (qwen3.7-plus ✔)
+L3 engine              OK (HTTP 200；模型 local-a, local-b)
 ```
 
-五项都 OK 就完美。L3 engine 显示不可达也没关系——流水线自动降级为两级（L2 直写），只是省钱的 L3 环节不参与。
+核心五项 OK 就能跑。`L3 engine` 不可达不算坏——说明还没选 B/C 路，工具会给出对应命令（`/pipe-config level3Mode agent` 或 `off`）。
 
 ## 第 3 步：说第一句话（1 分钟）
 
@@ -71,11 +74,12 @@ L3 engine           OK (http://127.0.0.1:18200/v1, model qwen3.8-...)
 
 接下来主 agent 会自动：
 
-1. **问你几个关键问题**（框架/数据库/认证/测试期望…），然后用弹窗锁定需求 → `requirement_lock.json`
-2. **评估要不要三级**：任务太简单会直说「不用三级」
-3. **拆模块、开干**：spawn L2、L2 分解出 L3 碎活、批量执行、质量门、逐节点汇报
-4. **到里程碑弹窗验收**：你点「我很满意」才继续，否则主 agent 会先修正
-5. **最后写 checkpoint**：下一个会话能直接续接
+1. **先定模型（一次性弹窗）**：贴出本机全部二级/三级模型 + 可复制的 `/pipe-config ...` 行，问一次「用默认 / 我自己指定 / 只用 L1+L2 / 不用三级协作」；这个弹窗同时完成本工作区的一次性启用确认，不会连着弹两个窗。不选就用默认（L2 = flash 模型，L3 = 本机引擎排序第 1）。
+2. **问你几个关键问题**（框架/数据库/认证/测试期望…），然后用弹窗锁定需求 → `requirement_lock.json`
+3. **评估要不要三级**：任务太简单会直说「不用三级」
+4. **拆模块、开干**：spawn L2、L2 分解出 L3 碎活、批量执行、质量门、逐节点汇报
+5. **到里程碑弹窗验收**：你点「我很满意」才继续，否则主 agent 会先修正
+6. **最后写 checkpoint**：下一个会话能直接续接
 
 ### 期间你可以用的控制键
 
@@ -85,12 +89,15 @@ L3 engine           OK (http://127.0.0.1:18200/v1, model qwen3.8-...)
 | 继续 | `/pipe-resume` |
 | 彻底关掉，变回普通 agent | `/pipe-off` |
 | 看当前进度 | `pipeline_status`（或 `/pipe-config`） |
-| 改配置 | `/pipe-config <键> <值>` |
+| 改配置 | `/pipe-config <键> <值>`（模型名直接写，provider 自动配对；可带 `mode=agent`） |
 
 ## 常见问题
 
+**Q：我没有任何本地引擎，能用吗？**
+→ 能。开工弹窗选「我自己指定」，从 L2 清单里挑一个云端模型发 `/pipe-config level3Model <id> mode=agent`（v123 起一条命令自动配对 provider）；或者选「只用 L1+L2」，`/pipe-config level3Mode off`，最省事。
+
 **Q：`/pipe-selftest` 报 L3 engine 不可达？**
-→ 启动本地引擎即可。没有本地引擎也能跑，但 L3 省不了钱，建议按 `TUTORIAL.md` 配一个。
+→ 上面两条路任选；真想用本地引擎就把服务拉起来再跑 `/pipe-selftest`。
 
 **Q：plug 装好了但 `pipeline_status` 不存在？**
 → 插件只在新会话加载。关掉会话重开，或刷新 GUI 页面。
@@ -98,8 +105,8 @@ L3 engine           OK (http://127.0.0.1:18200/v1, model qwen3.8-...)
 **Q：它把我的普通提问也拿来拆模块了？**
 → 告诉它「不用三级模式」，或执行 `/pipe-config mode off`。`mode=auto` 时会按项目复杂度自动评估，简单任务不会硬套。
 
-**Q：改完插件代码后不生效？**
-→ Electron 按模块路径缓存，必须「复制到新目录 + 改包名后缀 + 重装 + 移除旧 bundle」（见 README 安装说明）。
+**Q：改了模型后 L2 派发报 "supported API model names are ..."？**
+→ 那是模型和 provider 没配对。v123 起 `/pipe-config level2Model <id>` 会自动配套 provider；老配置可用 `/pipe-config level2Provider <正确 provider>` 修一次，`pipeline_selftest` 的 `L2 model/provider` 一项也会直接告诉你该发哪条命令。
 
 **Q：到里程碑卡住不动了？**
 → 里程碑验收是硬 Gate：主 agent 弹窗问你「满意吗」。回答后它会继续。如果你不小心关掉了弹窗，说「继续」即可。
@@ -109,4 +116,4 @@ L3 engine           OK (http://127.0.0.1:18200/v1, model qwen3.8-...)
 
 ---
 
-更完整的用法看 [README.md](README.md)，配置项看 [TUTORIAL.md](TUTORIAL.md)，架构原理看 [docs/agent-lifecycle-design.md](docs/agent-lifecycle-design.md)。
+更完整的用法看 [README.md](README.md)（English: [README.en.md](README.en.md)），配置项看 [TUTORIAL.md](TUTORIAL.md)，架构原理看 [docs/agent-lifecycle-design.md](docs/agent-lifecycle-design.md)。

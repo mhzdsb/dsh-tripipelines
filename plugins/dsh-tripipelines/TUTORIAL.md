@@ -145,7 +145,7 @@ dsh plugin --profile web add <本插件目录的绝对路径>
 | `maxLevel3Concurrency` | `1` | 三级本地执行器最大并发（ninfer 单实例串行） |
 | `maxLevel2Retries` | `3` | 二级接管/任务最大尝试次数（超限上报 L1 干不了） |
 | `maxLevel2Agents` | `10` | 二级模块负责人数量上限 |
-| `activationGate` | `true` | 是否要求新工作区首次激活询问（A 启用 / B 普通 / C 记住） |
+| `activationGate` | `true` | 是否要求新工作区首次激活询问（v125 起并入开工定模型弹窗，一次问完；也可单独答 A 启用 / B 普通 / C 记住） |
 | `maxTotalTokensPerRun` | `500000` | 单次 run 的 token 预算上限（0=不限，超限自动暂停） |
 | `maxDurationPerRun` | `7200000` | 单次 run 时长上限，毫秒（0=不限，超限自动暂停） |
 | `maxFilesPerRun` | `200` | 单次 run 改动文件数上限（0=不限，超限自动暂停） |

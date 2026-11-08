@@ -11,10 +11,28 @@
 import { mkdirSync, mkdtempSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
+const pkgRoot = fileURLToPath(new URL('../../', import.meta.url))
+// v125 — the suite ships inside the package (test/smoke). In this repo's monorepo
+// layout dev/smoke holds a copy whose ../../ is the REPO root; fall back to it so
+// both copies run unchanged from either location.
+const repoRoot = existsSync(join(pkgRoot, 'lib')) ? pkgRoot : join(pkgRoot, 'plugins', 'dsh-tripipelines')
+// dev/smoke keeps the canonical copy of every suite; test/smoke is the shipped
+// mirror. Editing one without the other would silently fork the assertions, so
+// pin the directory this run loads lib/ from and compare against the sibling copy.
+const twinDir = (() => {
+  const self = process.argv[1] || ''
+  // argv[1] is the file's own path: strip its filename to get the directory it
+  // actually runs from (dev/smoke in the monorepo, test/smoke when shipped).
+  if (/[/\\](?:test|dev)[/\\]smoke[/\\][^/\\]+$/.test(self)) return dirname(self)
+  return dirname(fileURLToPath(import.meta.url))
+})()
+// dev/smoke keeps the canonical copy of every suite; test/smoke is the shipped
+// mirror — they must stay byte-identical or assertions silently fork. twinDir is
+// THIS file's own directory, so the check compares the two locations' copies.
+const twinFile = join(twinDir, 'v121_model_setup_smoke.mjs')
 let passed = 0
 let failed = 0
 
@@ -93,7 +111,7 @@ function call(h, name, args) {
 }
 
 async function main() {
-  cpSync(join(repoRoot, 'plugins', 'dsh-tripipelines', 'lib'), libDir, { recursive: true })
+  cpSync(join(repoRoot, 'lib'), libDir, { recursive: true })
   const cfgPath = join(libDir, 'config.js')
   const cfgSrc = readFileSync(cfgPath, 'utf8')
   writeFileSync(
@@ -113,6 +131,7 @@ async function main() {
   const guards = await import(pathToFileURL(join(libDir, 'guards.js')).href)
 
   section('pure discovery helpers')
+  check('dev/smoke and test/smoke copies are byte-identical', existsSync(twinFile) && readFileSync(twinFile, 'utf8') === readFileSync(fileURLToPath(import.meta.url), 'utf8'), twinFile)
   check('extractModelIds reads the OpenAI shape in order', JSON.stringify(models.extractModelIds({ data: [{ id: 'b' }, { id: 'a' }, { id: 'b' }] })) === '["b","a"]')
   check('extractModelIds accepts a bare array and ignores empty ids', JSON.stringify(models.extractModelIds(['x', '', null, { id: 'y' }])) === '["x","y"]')
 
@@ -221,6 +240,26 @@ async function main() {
 
     const unknown = await call(h, 'pipeline_model_setup', { apply: 'custom', level2Model: 'not-a-real-model' })
     check('unknown model is accepted with a warning', unknown.warnings.some((w) => w.includes('not-a-real-model')), JSON.stringify(unknown.warnings))
+
+    section('v125 — the activation gate rides along in one dialog')
+    const projB = join(tmp, 'proj-b')
+    mkdirSync(join(projB, '.git'), { recursive: true })
+    sessions.set('s2', mkSession('s2', projB))
+    const callB = (name, args) => h.tools.get(name).execute(args, { agent: { id: 's2' }, signal: undefined })
+    const actPath = join(projB, '.dsh', 'pipeline', 'activation.json')
+    check('fresh workspace has no activation record yet', !existsSync(actPath))
+    const merged = await callB('pipeline_model_setup', {})
+    check('merged question asks activation + models in one shot', merged.question?.activationMerged === true && merged.question.question.includes('启用'), JSON.stringify(merged.question?.question))
+    check('merged message mentions the combined confirm', merged.message.includes('第一次启用'), merged.message.slice(0, 200))
+    check('merged next tells L1 to pass activation back', String(merged.next).includes('activation='), String(merged.next))
+    const lockBoth = await callB('pipeline_lock_requirements', { requirement: 'two-gate project' })
+    check('lock merges both hints into one (no second dialog)', typeof lockBoth.modelSetupHint === 'string' && lockBoth.modelSetupHint.includes('activation gate') && lockBoth.activationHint === null, JSON.stringify({ m: lockBoth.modelSetupHint, a: lockBoth.activationHint }))
+    const enableNow = await callB('pipeline_model_setup', { apply: 'defaults', activation: 'enable' })
+    check('apply with activation records the workspace choice', existsSync(actPath) && JSON.parse(readFileSync(actPath, 'utf8')).choice === 'enable')
+    const afterMerge = await callB('pipeline_model_setup', {})
+    check('post-merge run needs no further asking', afterMerge.question?.activationMerged !== true && !String(afterMerge.next).includes('activation='), JSON.stringify({ m: afterMerge.question?.activationMerged, n: String(afterMerge.next).slice(0, 60) }))
+    const lockAfterGates = await callB('pipeline_lock_requirements', { requirement: 'after gates closed' })
+    check('lock returns clean once both gates are closed', lockAfterGates.modelSetupHint === null && lockAfterGates.activationHint === null, JSON.stringify(lockAfterGates))
   } finally {
     // Close keep-alive sockets first: on Windows, process.exit() while undici is
     // tearing a socket down trips a libuv assertion in async.c.

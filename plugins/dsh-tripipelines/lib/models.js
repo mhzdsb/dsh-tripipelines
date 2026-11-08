@@ -240,7 +240,7 @@ export function pickDefaultLevel3(discovery, cfg = DEFAULT_CONFIG) {
 
 // The block the L1 pastes into the chat VERBATIM. Every model gets its own
 // copyable line; the defaults are marked; provider ambiguity is explained.
-export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConfigured = false, applied = null } = {}) {
+export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConfigured = false, applied = null, activationAsk = false } = {}) {
   const l2Models = l2?.models ?? []
   const l3Models = l3?.models ?? []
   const l2Default = defaults?.level2
@@ -265,6 +265,11 @@ export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConf
     lines.push('')
   }
   lines.push('🚦 开工前先定模型 —— 不指定就直接用【默认】；想换哪个，把下面任意一行命令复制到输入框发给我即可。')
+  if (activationAsk) {
+    // v125 — the one-time workspace activation gate rides along, so a brand-new
+    // project only ever sees ONE onboarding dialog instead of two in a row.
+    lines.push('（这也是本工作区第一次启用三级流水线：下一条提问会顺带确认是否启用，不用再单独问一次。）')
+  }
   lines.push('')
   lines.push(`当前：L1 = 本对话所用模型 ｜ L2 = ${cur.level2Provider ?? '?'}/${cur.level2Model ?? '?'} ｜ L3 = ${off ? '已关闭（两级协作）' : `${cur.level3Model ?? '?'}（${cur.level3Mode ?? 'auto'} 模式）`}`)
   const curEntry = l2Models.find((m) => m.id === cur.level2Model)
@@ -357,7 +362,13 @@ export function renderModelSetupMessage({ l2, l3, defaults, current, alreadyConf
 }
 
 // ask_user_question payload the L1 should raise right after posting the message.
-export function buildModelSetupQuestion({ defaults, level3Mode } = {}) {
+// v125 — when `activation` is passed (the workspace has never confirmed the
+// pipeline itself), the onboarding question doubles as the one-time activation
+// gate so a brand-new project faces ONE dialog instead of two back-to-back ones.
+export function buildModelSetupQuestion({ defaults, level3Mode, activation } = {}) {
+  // v125 — tri-state `activation`: true = the workspace gate is open and this dialog
+  // carries it; false = gate already closed (plain model question); undefined =
+  // legacy callers, keep the soft "前三项会记住启用" framing.
   const l2 = defaults?.level2?.model ?? DEFAULT_CONFIG.level2Model
   const off = level3Mode === 'off'
   const l3 = off ? '关闭（只用 L1+L2）' : defaults?.level3?.model ?? '本机排序第 1'
@@ -372,11 +383,21 @@ export function buildModelSetupQuestion({ defaults, level3Mode } = {}) {
   } else {
     options.push({ label: '恢复三级执行器', description: '重新启用 L3（/pipe-config level3Mode auto，沿用当前三级模型）' })
   }
-  options.push({ label: '本项目不用三级协作', description: '单 agent 工作（/pipe-config mode off）' })
+  const mergedActivation = activation === undefined && !off
+  options.push(
+    mergedActivation
+      ? { label: '本项目不用三级协作（并记住此工作区以后默认启用）', description: '这次单 agent 工作（/pipe-config mode off），下次直接启用流水线' }
+      : { label: '本项目不用三级协作', description: '单 agent 工作（/pipe-config mode off）' },
+  )
   return {
     header: '开工前定模型',
-    question: `本项目用哪套模型？（默认 L2 = ${l2}，L3 = ${l3}；想换哪个，把上面对应的命令复制发给我）`,
+    question: activation === true
+      ? `三级流水线要在这里启用吗？顺便定一下模型（默认 L2 = ${l2}，L3 = ${l3}；想换哪个，把上面对应的命令复制发给我）。选前三项都会启用。`
+      : activation === false
+        ? `本项目用哪套模型？（默认 L2 = ${l2}，L3 = ${l3}；想换哪个，把上面对应的命令复制发给我）`
+        : `本项目用哪套模型？（默认 L2 = ${l2}，L3 = ${l3}；想换哪个，把上面对应的命令复制发给我）前三项同时会记住此工作区以后默认启用三级流水线。`,
     options,
+    ...(activation === true || mergedActivation ? { activationMerged: true } : {}),
   }
 }
 

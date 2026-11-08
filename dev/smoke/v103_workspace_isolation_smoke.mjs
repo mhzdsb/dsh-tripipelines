@@ -12,7 +12,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
+const pkgRoot = fileURLToPath(new URL('../../', import.meta.url))
+// v125 — the suite ships inside the package (test/smoke). In this repo's monorepo
+// layout dev/smoke holds a copy whose ../../ is the REPO root; fall back to it so
+// both copies run unchanged from either location.
+const repoRoot = existsSync(join(pkgRoot, 'lib')) ? pkgRoot : join(pkgRoot, 'plugins', 'dsh-tripipelines')
 let passed = 0
 let failed = 0
 
@@ -118,7 +122,7 @@ function statusOf(h, sessionId) {
 
 try {
   // Work on a throwaway copy so the test never reads the user's saved config.
-  cpSync(join(repoRoot, 'plugins', 'dsh-tripipelines', 'lib'), libDir, { recursive: true })
+  cpSync(join(repoRoot, 'lib'), libDir, { recursive: true })
   const cfgPath = join(libDir, 'config.js')
   const cfgSrc = readFileSync(cfgPath, 'utf8')
   writeFileSync(
@@ -206,7 +210,7 @@ try {
 
   section('board route picks ?workspace=')
   const resB = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
-  routes[0].handler({ url: `/pipeline/board?workspace=${encodeURIComponent(rootB)}` }, resB)
+  routes[0].handler({ url: `/pipeline/board?debug=1&workspace=${encodeURIComponent(rootB)}` }, resB)
   const snapB = resB.statusCode === 200 ? JSON.parse(resB.body) : null
   check('route returns 200 for B', resB.statusCode === 200, `status ${resB.statusCode}`)
   check('route reports the B workspace key', snapB && snapB.debug && snapB.debug.workspace === normalizeRoot(rootB), JSON.stringify(snapB?.debug))
@@ -217,8 +221,15 @@ try {
   check('switcher list marks the active workspace', snapB?.workspaces?.find((w) => w.active)?.key === normalizeRoot(rootB), JSON.stringify(snapB?.workspaces))
 
   const resX = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
-  routes[0].handler({ url: `/pipeline/board?workspace=${encodeURIComponent(join(tmp, 'does-not-exist'))}` }, resX)
+  routes[0].handler({ url: `/pipeline/board?debug=1&workspace=${encodeURIComponent(join(tmp, 'does-not-exist'))}` }, resX)
   check('unknown workspace is a 404', resX.statusCode === 404, `status ${resX.statusCode}`)
+
+  // v125 — the default poll payload carries no host paths: debug only with ?debug=1.
+  const resPlain = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
+  routes[0].handler({ url: '/pipeline/board' }, resPlain)
+  const plainSnap = resPlain.statusCode === 200 ? JSON.parse(resPlain.body) : null
+  check('default snapshot omits the debug block', plainSnap && plainSnap.debug === undefined, JSON.stringify(plainSnap?.debug))
+  check('workspaces list still keys-only without debug', Array.isArray(plainSnap?.workspaces) && plainSnap.workspaces.every((w) => typeof w.key === 'string'), JSON.stringify(plainSnap?.workspaces))
 
   section('mode=off blocks dispatch (new apply)')
   const sessionsOff = new Map([['c1', mkSession('c1', rootC)]])
@@ -244,7 +255,7 @@ try {
   // there. v108/v109 persisted the pick in localStorage, which pinned the card to
   // a stale project across switches; the legacy key must stay cleared and the
   // picker must offer a "follow" entry.
-  const clientSrc = readFileSync(join(repoRoot, 'plugins', 'dsh-tripipelines', 'client.js'), 'utf8')
+  const clientSrc = readFileSync(join(repoRoot, 'client.js'), 'utf8')
   check('client reads the main-view session cwd', clientSrc.includes('retainedBy') && clientSrc.includes('mainView') && clientSrc.includes('cwd'), '')
   check('client offers a follow-current-workspace entry', clientSrc.includes('跟随当前工作区'), '')
   check('client clears the legacy persisted pick', clientSrc.includes('removeItem') && !clientSrc.includes('localStorage.setItem'), '')
@@ -256,7 +267,7 @@ try {
   // v108: the registry persists the projects it served, so a cold board restores
   // the newest one (which is what the switcher shows) instead of idle.
   const resCold = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
-  routes[routes.length - 1].handler({ url: '/pipeline/board' }, resCold)
+  routes[routes.length - 1].handler({ url: '/pipeline/board?debug=1' }, resCold)
   const coldSnap = resCold.statusCode === 200 ? JSON.parse(resCold.body) : null
   check('cold board answers 200', resCold.statusCode === 200, `status ${resCold.statusCode}`)
   check('cold board restores the newest known workspace', coldSnap?.debug?.workspace === normalizeRoot(rootB), JSON.stringify(coldSnap?.debug))
@@ -264,7 +275,7 @@ try {
 
   // The switcher may ask for a project this daemon has not loaded yet.
   const resLoadA = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
-  routes[routes.length - 1].handler({ url: `/pipeline/board?workspace=${encodeURIComponent(rootA)}` }, resLoadA)
+  routes[routes.length - 1].handler({ url: `/pipeline/board?debug=1&workspace=${encodeURIComponent(rootA)}` }, resLoadA)
   const loadA = resLoadA.statusCode === 200 ? JSON.parse(resLoadA.body) : null
   check('cold board can load A from disk by key', resLoadA.statusCode === 200 && loadA?.debug?.workspace === normalizeRoot(rootA), `status ${resLoadA.statusCode}`)
   check('loaded A restores its run', loadA?.run?.id === lock.run_id, JSON.stringify({ run: loadA?.run?.id }))
@@ -274,7 +285,7 @@ try {
   // must walk up to the project root instead of 404ing or creating a store there.
   mkdirSync(join(rootA, 'src', 'nested'), { recursive: true })
   const resSub = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
-  routes[routes.length - 1].handler({ url: `/pipeline/board?workspace=${encodeURIComponent(join(rootA, 'src', 'nested'))}` }, resSub)
+  routes[routes.length - 1].handler({ url: `/pipeline/board?debug=1&workspace=${encodeURIComponent(join(rootA, 'src', 'nested'))}` }, resSub)
   const subSnap = resSub.statusCode === 200 ? JSON.parse(resSub.body) : null
   check('a session cwd subdirectory resolves to its project root', resSub.statusCode === 200 && subSnap?.debug?.workspace === normalizeRoot(rootA), `status ${resSub.statusCode} · ${JSON.stringify(subSnap?.debug)}`)
   check('the subdirectory probe did not create a nested store', !existsSync(join(rootA, 'src', 'nested', '.dsh')))
@@ -290,7 +301,7 @@ try {
   const h3 = makeCtx({ sessions: new Map(), roots: [], withAgents: false })
   apply(h3.ctx, { mode: 'auto' })
   const resIdle = { statusCode: 0, body: null, headersSent: false, writeHead(code) { this.statusCode = code; this.headersSent = true }, end(body) { this.body = body } }
-  routes[routes.length - 1].handler({ url: '/pipeline/board' }, resIdle)
+  routes[routes.length - 1].handler({ url: '/pipeline/board?debug=1' }, resIdle)
   const idleSnap = resIdle.statusCode === 200 ? JSON.parse(resIdle.body) : null
   check('cold board without state answers 200 idle', resIdle.statusCode === 200 && idleSnap?.ok === true && idleSnap?.run?.status === 'idle', `status ${resIdle.statusCode}`)
   check('idle snapshot is marked idle in debug', idleSnap?.debug?.idle === true && idleSnap?.debug?.stores === 0, JSON.stringify(idleSnap?.debug))

@@ -89,6 +89,11 @@ export function makeModelSetupTool(ctx, cfg, r) {
         level2Provider: { type: 'string', description: 'Custom L2 provider (apply=custom).' },
         level3Model: { type: 'string', description: 'Custom L3 model id (apply=custom). Local engine id → executor; cloud provider model → agent (auto-paired).' },
         level3Mode: { type: 'string', enum: ['auto', 'executor', 'agent', 'off'], description: 'L3 mode (apply=custom). Defaults to auto-detection: engine model → executor, cloud model → agent. off = two-tier L1+L2 only (no executor tier).' },
+        activation: {
+          type: 'string',
+          enum: ['enable', 'normal', 'remember'],
+          description: 'One-time workspace activation answer folded into onboarding (v125): enable / normal / remember. When the activation gate is still open, `question` already asks for it in the same dialog — pass the user\'s choice back here with apply so nothing gets asked twice.',
+        },
       },
     },
     output: {
@@ -98,6 +103,22 @@ export function makeModelSetupTool(ctx, cfg, r) {
     async execute(args = {}) {
       const record = loadModelSetup(r.stateDir)
       const alreadyConfigured = record.confirmed === true
+      // v125 — merge the two first-run dialogs: while the workspace activation
+      // gate is open, the model question carries it too (see buildModelSetupQuestion),
+      // and lock stops repeating an activationHint the setup already covered.
+      const activation = loadActivation(r.stateDir)
+      let activationOpen = cfg.activationGate === true && !activation.confirmed
+      if (args.activation) {
+        saveActivation(r.stateDir, args.activation)
+        activationOpen = false
+      }
+      // v125 — choosing models through this tool is itself consent to run the
+      // pipeline here: an apply with a model choice closes the activation gate as
+      // "remember" unless the user answered it explicitly in the same dialog.
+      if (args.apply && !args.activation && activationOpen) {
+        saveActivation(r.stateDir, 'remember')
+        activationOpen = false
+      }
       const l2 = await discoverLevel2Models(ctx, cfg)
       const l3 = await discoverLevel3Models(cfg)
       const defaults = { level2: pickDefaultLevel2(l2, cfg), level3: pickDefaultLevel3(l3, cfg) }
@@ -207,6 +228,7 @@ export function makeModelSetupTool(ctx, cfg, r) {
         }
       }
       const current = { level2Provider: cfg.level2Provider, level2Model: cfg.level2Model, level3Model: cfg.level3Model, level3Provider: cfg.level3Provider, level3Mode: cfg.level3Mode }
+      const activationMergedNow = activationOpen && !args.activation && !alreadyConfigured
       const message = renderModelSetupMessage({
         l2,
         l3,
@@ -214,6 +236,7 @@ export function makeModelSetupTool(ctx, cfg, r) {
         current,
         alreadyConfigured: alreadyConfigured && !apply,
         applied,
+        ...(activationMergedNow ? { activationAsk: true } : {}),
       })
       return {
         alreadyConfigured,
@@ -225,11 +248,13 @@ export function makeModelSetupTool(ctx, cfg, r) {
         sources: { l2: l2.source, l3: l3.source },
         errors: [...l2.errors, ...l3.errors],
         warnings,
-        question: buildModelSetupQuestion({ defaults, level3Mode: cfg.level3Mode }),
+        question: buildModelSetupQuestion({ defaults, level3Mode: cfg.level3Mode, activation: activationMergedNow ? true : activationOpen ? undefined : false }),
         message,
         next: applied
           ? '模型已定。继续需求访谈，然后 pipeline_lock_requirements。'
-          : '把 message 原样贴给用户，然后用 ask_user_question 提问 question；用户不选就再调 pipeline_model_setup({apply:"defaults"})。',
+          : activationMergedNow
+            ? '把 message 原样贴给用户，然后用 ask_user_question 提问 question（它已合并一次性启用确认）；用户选定后把 activation=enable|normal|remember 连同 apply 一起回传，之后 lock 不会再追问激活。用户不选就再调 pipeline_model_setup({apply:"defaults", activation:"remember"})。'
+            : '把 message 原样贴给用户，然后用 ask_user_question 提问 question；用户不选就再调 pipeline_model_setup({apply:"defaults"})。',
       }
     },
   }
@@ -282,6 +307,13 @@ export function makeLockTool(ctx, cfg, r) {
       let modelSetupHint = null
       if (!setup.confirmed) {
         modelSetupHint = 'MODEL SETUP (once per project, before the run): call pipeline_model_setup, paste its `message` to the user VERBATIM (every locally available L2/L3 model with copyable /pipe-config commands), then ask its `question` via ask_user_question. If the user does not choose, call pipeline_model_setup({apply:"defaults"}) (L2 flash, L3 local #1). To drop the executor tier entirely (two-tier L1+L2), apply custom with level3Mode:"off".'
+      }
+      // v125 — when both gates are still open, the model-setup dialog carries the
+      // activation question too (buildModelSetupQuestion merges it); do not make
+      // the user answer two dialogs back-to-back.
+      if (modelSetupHint && activationHint) {
+        modelSetupHint += ' The question also covers the one-time activation gate: pass the user\'s activation=enable|normal|remember back to pipeline_model_setup together with apply, so this lock never needs to ask separately.'
+        activationHint = null
       }
       // v119 — a new run must not inherit the previous run's L2s. They used to
       // stay `in_progress` forever and keep appearing in pipeline_status's
@@ -984,7 +1016,7 @@ export function makeSelftestTool(ctx, cfg, r) {
       const l3Mode = cfg.level3Mode ?? 'auto'
       const endpoint = String(cfg.level3Endpoint ?? '').replace(/\/$/, '')
       let engineOk = false
-      let engineDetail = '未配置 level3Endpoint'
+      let engineDetail = '未配置 level3Endpoint（executor/auto 模式需要本机 OpenAI 兼容端点；没有本地引擎就 /pipe-config level3Mode agent 走云端模型，或 off 走两级）'
       let engineName = 'L3 engine'
       if (l3Mode === 'off') {
         // v124 — two-tier mode is a deliberate state, not a degradation.
@@ -1011,7 +1043,7 @@ export function makeSelftestTool(ctx, cfg, r) {
             if (models.length && !models.includes(cfg.level3Model)) engineDetail += `；⚠️ 配置的 ${cfg.level3Model} 不在列表`
           }
         } catch (err) {
-          engineDetail = `不可达：${err?.message ?? err}（本地引擎不可用时会自动降级为 L2 直写）`
+          engineDetail = `不可达：${err?.message ?? err}（executor 模式下引擎失联时子任务会失败重试；没有本地引擎可改用 agent 模式（云端模型）或 off 两级模式，见 /pipe-config level3Mode）`
         }
       }
       // v124 — the off branch already added its own check; never probe the tier.

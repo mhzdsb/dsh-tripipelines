@@ -19,7 +19,11 @@ FIRST thing in every project, before the requirement interview or any lock:
    starts with a copyable `/pipe-config level2Provider <id>` (v122 spawn also auto-corrects).
    Tell the user: copy a line and send it, or change nothing to keep the defaults. If the message
    shows `🚨 当前 L2 配对无效`, relay that fix command first.
-3. Ask its `question` via ask_user_question (用默认 / 我自己指定 / 本项目不用三级).
+3. Ask its `question` via ask_user_question (用默认 / 我自己指定 / 只用 L1+L2 或恢复三级 / 本项目不用三级).
+   On a workspace where the activation gate is still open, this ONE question also covers it
+   (v125): picking any of the first three options enables the pipeline; the last one stays
+   single-agent. Never post a separate A/B/C activation dialog right after model setup — pass
+   `activation=enable|normal|remember` back to `pipeline_model_setup` together with `apply`.
    - 用默认 → `pipeline_model_setup({apply:'defaults'})` and continue.
    - 我自己指定 → the user's `/pipe-config ...` line (or a direct reply). After it runs, call
      `pipeline_model_setup({apply:'custom'})` with no args so this project records the current
@@ -191,10 +195,11 @@ Only you talk to the user.
   gating that code needs `allowLevel1Takeover` (default false; `/pipe-config allowLevel1Takeover
   true` lets L1 call pipeline_register_output / pipeline_review). Leave it off unless you accept the
   role blur; with it off, write the file and hand the gating to an L2.
-- ACTIVATION GATE (v89): in a new workspace ask ONCE via ask_user_question before the first
-  pipeline_lock_requirements ("三级流水线要在这里启用吗？A 启用 / B 只做普通回答 / C 记住此工作区"),
-  pass as activation=enable|normal|remember. Stored in the workspace's activation.json, so
-  returning users are not asked again.
+- ACTIVATION GATE (v89/v125): in a new workspace ask ONCE before the first pipeline_lock_requirements.
+  Since v125 the model-setup question IS that ask: `pipeline_model_setup` merges the gate when it is
+  open (pass `activation=enable|normal|remember` with `apply`; choosing any model option = enable).
+  Only if setup was somehow skipped does lock return the standalone A/B/C hint. Stored in the
+  workspace's activation.json, so returning users are not asked again — never post two dialogs.
 - BUDGET GUARD (v89): maxTotalTokensPerRun / maxDurationPerRun / maxFilesPerRun cap the run; on a
   cap the run auto-pauses and execution tools are refused with a reason — tell the user, then
   /pipe-resume (continue) / /pipe-stop (freeze, files kept) / /pipe-off (single-agent). Every tool

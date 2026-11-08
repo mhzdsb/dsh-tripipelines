@@ -1,10 +1,14 @@
 // GUI status board (v92): a read-only JSON snapshot of the run, served over HTTP so
 // client.js can poll it. Without webServer the route is simply not registered.
+// SECURITY NOTE (v125): the DSH web server binds to localhost only and this route
+// is read-only — but anything on this machine (and any page making cross-origin
+// reads if the server ever loosens CORS) can fetch the board. The default payload
+// therefore omits absolute paths; host cwd / state dirs ship only with ?debug=1.
 import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v124'
+const BUILD_TAG = 'v125'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -150,7 +154,7 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
 // yet) has no store at all. The GUI card polls every 2.5s, so answering 404 here
 // made the whole card vanish after every restart. Return a normal "idle" payload
 // instead; the client renders its muted 待命 state and the card stays in place.
-export function idleBoardSnapshot(cfg, stores) {
+export function idleBoardSnapshot(cfg, stores, debugRequested = true) {
   const num = (v) => Number(v) || 0
   return {
     ok: true,
@@ -192,14 +196,17 @@ export function idleBoardSnapshot(cfg, stores) {
       },
     },
     recentEvents: [],
-    debug: {
-      build: BUILD_TAG,
-      workspace: null,
-      stateDir: null,
-      cwd: process.cwd(),
-      stores: Number(stores) || 0,
-      idle: true,
-    },
+    // v125 — same opt-in as the live snapshot: no absolute paths by default.
+    debug: debugRequested
+      ? {
+        build: BUILD_TAG,
+        workspace: null,
+        stateDir: null,
+        cwd: process.cwd(),
+        stores: Number(stores) || 0,
+        idle: true,
+      }
+      : { build: BUILD_TAG, stores: Number(stores) || 0, idle: true },
   }
 }
 
@@ -222,16 +229,18 @@ export function installBoardRoute(ctx, source, cfg) {
           try {
             let r
             let workspaceKey = null
+            let qs = ''
+            try {
+              const u = String(req?.url ?? '')
+              const i = u.indexOf('?')
+              if (i >= 0) qs = u.slice(i + 1)
+            } catch { qs = '' }
+            // v125 — opt-in diagnostics: `?debug=1` adds the path-bearing debug block.
+            const debugRequested = /(?:^|&)debug=1(?:&|$)/.test(qs)
             if (registry) {
-              let qs = ''
-              try {
-                const u = String(req?.url ?? '')
-                const i = u.indexOf('?')
-                if (i >= 0) qs = u.slice(i + 1)
-              } catch { qs = '' }
               const picked = registry.entryForRoute(qs)
               if (picked && picked.idle) {
-                const snap = idleBoardSnapshot(cfg, registry.size())
+                const snap = idleBoardSnapshot(cfg, registry.size(), debugRequested)
                 snap.workspaces = (typeof registry.listKnown === 'function' ? registry.listKnown() : [])
                   .map((w) => ({ key: w.key, name: w.name, active: false }))
                 res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -273,12 +282,18 @@ export function installBoardRoute(ctx, source, cfg) {
             const snap = buildBoardSnapshot(r, cfg, (id) => measureAgentTokens(ctx, id))
             snap.workspaces = (registry && typeof registry.listKnown === 'function' ? registry.listKnown() : [])
               .map((w) => ({ key: w.key, name: w.name, active: w.key === workspaceKey }))
-            snap.debug = {
-              build: BUILD_TAG,
-              workspace: workspaceKey,
-              stateDir: r?.store?.stateDir ?? null,
-              cwd: process.cwd(),
-              stores: registry ? registry.size() : 1,
+            // v125 — the debug block (host cwd, absolute state dirs) is a support
+            // affordance, not part of the board. It ships only when the GUI asks
+            // for it explicitly (?debug=1), so the default poll payload carries no
+            // filesystem paths beyond the workspace keys the picker needs.
+            if (debugRequested) {
+              snap.debug = {
+                build: BUILD_TAG,
+                workspace: workspaceKey,
+                stateDir: r?.store?.stateDir ?? null,
+                cwd: process.cwd(),
+                stores: registry ? registry.size() : 1,
+              }
             }
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
             res.end(JSON.stringify(snap))

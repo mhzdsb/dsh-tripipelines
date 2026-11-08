@@ -1,5 +1,7 @@
 # dsh-tripipelines · 流水线
 
+> **English:** see [README.en.md](README.en.md) — same feature set, marketplace entry point for non-Chinese readers.
+
 > **分层协作，按需分配模型。** 把大活拆成每个模型都吃得下的份量——钱花在刀刃上，代码写得经得起十年。
 
 一个 **DeepSeek Harness（DSH）原生插件**：一级（你在会话里选的模型）负责规划与验收，二级（默认配置的模型，可按模块覆盖）负责写模块代码，三级本地模型干碎活。三级严格相邻、逐任务验收、全程可暂停可回溯。
@@ -7,9 +9,16 @@
 纯 Node 内置依赖，零外部 npm 包，不碰你的 DSH 源码。
 
 ```
-用户 ──只和 L1 对话──▶ L1(你选的模型) ◀──汇报迭代──▶ L2(模块负责人) ──强制下发──▶ L3(本地引擎)
+用户 ──只和 L1 对话──▶ L1(你选的模型) ◀──汇报迭代──▶ L2(模块负责人) ──强制下发──▶ L3(本地引擎/云端 agent)
       规划·验收·不写码     重新锚定·按异常汇报     分解·写码·审核        完整文件·多试几次·干不了反馈
       严格相邻：L1 ↔ L2 ↔ L3，同级/越级禁止
+
+┌────────────── GUI 看板（Web UI 侧栏小卡，2.5s 轮询，模型看不到它）──────────────┐
+│ RUN run-1730… active    ▓▓▓▓▓▓░░  里程碑 2/3 · 任务 7/9                          │
+│ M1 骨架与数据层 ✔已验收   M2 API 路由 ●完成待验收   M3 前端界面 ○进行中          │
+│ L1 上下文 ▓▓▓░░░ 41K/128K 甜点区    L2 api-auth ▓▓▓▓░ 63K/128K (qwen3.7-plus)   │
+│ L3 子任务 done 21 · failed 2（重试中）· token 182K / 预算 500K                   │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -35,26 +44,25 @@
 **适合**
 - 中大型/多文件的真实项目（≥ 3 个模块）
 - 想省 token 钱、又不想降质量的开发
-- 本机/局域网有 OpenAI 兼容的本地推理引擎（ninfer / vLLM / llama.cpp 都行）
+- 本机/局域网有 OpenAI 兼容的本地推理引擎（llama.cpp / vLLM / Ollama 都行），或者愿意用云端模型跑三级 agent 模式
 - 需要一条产线跑几十分钟、中途还能停下来的活
 
 **不适合**
 - 一次性脚本、单文件小改（直接让主 agent 写更快）
-- 没有本地引擎（三级退化成两级，价值减半）
 - 要求「一句话出全部代码」的即时小任务
 
 ---
 
 ## 快速开始（3 分钟）
 
-装插件 → 配本地引擎 → 说第一句话。三步详细版见 **[QUICKSTART.md](QUICKSTART.md)**。
+装插件 → 说第一句话。开工弹窗会贴出你机器上实际可用的模型清单，不选就用默认；没有本地引擎也有云端 agent / 两级两条路。详细版见 **[QUICKSTART.md](QUICKSTART.md)**。
 
 ```bash
-# 1. 安装（发布后走 npm / market；本地开发用快照 link）
-dsh plugin --profile <profile> add dsh-tripipelines        # npm / market（发布后）
-plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地快照 / dev
+# 1. 安装（npm / market 发布后走 A；本地开发用 link）
+dsh plugin --profile <profile> add dsh-tripipelines        # npm / market
+plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines')  # 本地 / dev
 
-# 2. 确认三级都活着
+# 2. 确认服务都活着
 /pipe-selftest
 
 # 3. 说一句话（不用你拆模块）
@@ -66,7 +74,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 ## 它怎么工作
 
 ### 四阶段工作流
-1. **引导开机**：新工作区首次询问一次「要启用流水线吗」（A 启用 / B 普通 / C 记住此工作区），答案存 `.dsh/pipeline/activation.json`。
+1. **引导开机**：新工作区首次弹窗一次「启用流水线 + 定模型」二合一（v125 起不再连问两次），答案存 `.dsh/pipeline/activation.json`。
 2. **需求访谈**：用弹窗问关键问题（框架/数据库/认证/测试期望…），锁定为 `requirement_lock.json`。
 3. **适配性评估**：任务太简单就直说「不用三级」，别硬套。
 4. **自适应调度**：拆模块（天然接缝 + 负载均衡）→ spawn L2 → L2 分解出 L3 子任务 → 批量执行 → 质量门 → 里程碑验收 → checkpoint。
@@ -96,9 +104,9 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 | **每 L2 独立模型（v94）** | 同一个 lead 可传 `provider` / `model` 覆盖默认配置——难模块换更强模型，其余照旧省钱 |
 | **里程碑状态机** | 里程碑完成 → 弹窗验收 → 落盘；未验收硬 Gate；冷启动自动恢复 |
 | **预算护栏** | `maxTotalTokensPerRun` / `maxDurationPerRun` / `maxFilesPerRun`（0=不限） |
-| **一次性激活 Gate** | 新工作区只问一次，答案按工作区记忆，之后不再打扰 |
+| **一次性激活 Gate** | 新工作区只问一次；v125 起与开工定模型弹窗合并为一条提问，答案按工作区记忆 |
 | **健康自检** | `/pipe-selftest` 检查 subagents API、llm 服务、L3 引擎；启动时也会非阻塞 ping |
-| **模块化解耦** | 15 个模块（最大约 600 行），`pnpm test` 串起 19 套 smoke 回归 |
+| **模块化解耦** | 15 个模块（最大约 600 行），`npm test` 串起 19 套 smoke 回归（随包发布，克隆即用） |
 | **四阶段工作流** | 开工定模型（v121）→ 需求访谈 → 适配性评估 → 自适应调度 |
 
 > 完整功能清单见 [CHANGELOG.md](CHANGELOG.md)，架构细节见 [docs/agent-lifecycle-design.md](docs/agent-lifecycle-design.md)。
@@ -107,13 +115,13 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 
 ### 前置条件
 1. **DSH** 已运行。
-2. **本地推理引擎**：任意 OpenAI 兼容服务（llama.cpp / vLLM / Ollama / strata 等）。在 profile 的 `llm-pi-ai` 里声明 provider 后，用 `/pipe-config level3Endpoint` 与 `level3Model` 指向它；自检 `curl <endpoint>/models`，或直接 `/pipe-selftest`。
-3. 默认的 L2 模型在 DSH 里可用（`deepseek-official` / `deepseek-flash`，可按模块覆盖）。
+2. **二级模型可用即可开工**：默认 `deepseek-official` / `deepseek-flash`；任何 DSH 已配置的 provider（含自定义 Token Plan）里的模型都行，开工弹窗会自动配对 provider。
+3. **三级可选**（三选一，见 QUICKSTART 第 0 步）：本机 OpenAI 兼容引擎（llama.cpp / vLLM / Ollama / strata 等，`/pipe-config level3Endpoint <地址>` + `level3Model <id>`）；或云端模型跑 agent 模式（`/pipe-config level3Model <id> mode=agent`，不需要端点）；或 `/pipe-config level3Mode off` 两级直跑。
 
 ### 安装步骤
 本插件是「目录」形式 bundle（`package.json` + `cordis.patch.yml` + `lib/` + `skills/`）：
 
-- **方式 A（推荐）**：DSH 插件管理器 GUI 或 `plugin_manager install_bundle`，指向插件目录。
+- **方式 A（推荐）**：DSH 插件管理器 GUI 或 `plugin_manager install_bundle`，指向插件目录或 npm 包名。
 - **方式 B**：`dsh plugin add <绝对路径>`（需要 pnpm）。
 - **方式 C（手动）**：junction 到 `profiles/<profile>/node_modules/dsh-tripipelines`，并在 profile 的 `cordis.patch.yml` 追加：
   ```yaml
@@ -125,8 +133,9 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines-vNN')  # 本地�
 ### 验证
 新开会话输入 `/pipe-config`，能看到配置列表；`listTools` 里出现 `pipeline_*` 工具即成功。更完整：`/pipe-selftest`。
 
-### ⚠️ 改代码后必须重装（Electron 缓存）
-Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置依赖。**每次改 `lib/*` 后**：复制到**全新目录** + 改包名后缀 + 重新安装（并移除旧 bundle），否则命中旧代码。
+### ⚠️ 开发时改代码后必须重装（Electron 缓存）
+
+**普通用户升级不受影响**：从市场/npm 装新版本、开新会话即可。下面只针对本机改 `lib/*` 的开发场景——Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置依赖。**每次改 `lib/*` 后**需复制到**全新目录** + 重新安装（并移除旧 bundle），否则命中旧代码。发布快照的 `-vNN` 目录就是这条规则的产物，不是使用前提。
 
 ## 配置（`/pipe-config`）
 
@@ -142,7 +151,7 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 |---|---|---|
 | `level1Model` | `deepseek-pro` | 一级模型（仅甜点区档案查询，不切换实际 L1） |
 | `level2Provider` / `level2Model` | `deepseek-official` / `deepseek-flash` | 二级模型 |
-| `level3Model` / `level3Provider` / `level3Endpoint` | 由配置指定 / `ninfer-local` / **空**（必须显式配置） | 三级模型；`executor` 模式走该端点的 OpenAI 协议（`/pipe-config level3Endpoint http://127.0.0.1:8080/v1`），`agent` 模式走 provider 子代理 |
+| `level3Model` / `level3Provider` / `level3Endpoint` | 由配置指定 / `ninfer-local` / **空**（executor 模式必须显式配置） | 三级模型；`executor` 模式走该端点的 OpenAI 协议（`/pipe-config level3Endpoint http://127.0.0.1:8080/v1`），`agent` 模式走 provider 子代理（provider 名随你的配置变化，只是默认标签） |
 | `level3Mode` | `auto` | L3 执行模式（v123/v124）：`auto` 按模型来源判断（引擎模型→executor，云端→agent）/ `executor`=本地端点一次性执行 / `agent`=DSH 子代理（云端模型必用）/ `off`=关闭三级，只用 L1+L2（二级自己写代码） |
 | `level3Engine` | `auto` | 引擎提示（auto/ollama/vllm/llamacpp/openai-compat/other） |
 | `maxCodeLines` | `100` | L3 交付代码行数上限 |
@@ -171,7 +180,9 @@ Electron 按「模块真实路径」缓存导入，且不支持非 Node 内置�
 
 **配置分层**：`DEFAULT_CONFIG` < 传入 config < 全局 `~/.dsh/pipeline/config.json` < 项目级 `<devDir>/pipeline-project.json`。不同 `devDir` 互不污染。
 
-**开工定模型（v121）**：每个项目第一次进入时，L1 先调 `pipeline_model_setup`，把本机全部二级/三级模型和可复制的 `/pipe-config ...` 命令贴出来并问一次；不选则落默认（L2 `deepseek-flash`，L3 本机 `/models` 第 1 个）。选择记在 `<stateDir>/model-setup.json`，同一项目不再追问；`pipeline_lock_requirements` 在未定模型时返回 `modelSetupHint`。
+**开工定模型（v121）**：每个项目第一次进入时，L1 先调 `pipeline_model_setup`，把本机全部二级/三级模型和可复制的 `/pipe-config ...` 命令贴出来并问一次；不选则落默认（L2 `deepseek-flash`，L3 本机 `/models` 第 1 个）。选择记在 `<stateDir>/model-setup.json`，同一项目不再追问；`pipeline_lock_requirements` 在未定模型时返回 `modelSetupHint`。v125 起这条提问同时承担一次性激活确认——不会再连着弹两次窗。
+
+**测试随包发布（v125）**：19 套 smoke 回归位于包内 `test/smoke/`，装完插件在任何目录都能 `npm test` 验证，无需本仓库的 dev/ 布局。
 
 **跨 provider 选模型（v122/v123）**：模型 id 只在提供它的 provider 下有效（例如千问 Token Plan 的 `qwen3.7-plus` 属于 `qwen-token-plan-cn`）。现在 `/pipe-config level2Model <id>` 直接写模型名即可：命令执行后会自动配套 provider 并输出 `🔧 已自动配套 level2Provider=…`；清单也会按 provider 分组给出可复制的 provider 行。派发前还有一次校验兜底（`providerNote`），显式传 `provider` 的调用不会被改写，只会警告。
 
@@ -270,8 +281,8 @@ pipeline_ledger()            # 从交接文档抽决策候选
 ## 版本
 
 - **包版本**（`package.json`）：语义化 `x.y.z`，市场/发布用。
-- **迭代代号**（`vN`）：开发部署号，出现在部署目录与内部文档里（Electron 缓存要求每次改代码换新目录，见上方安装注意）。
-- 完整历史见 [CHANGELOG.md](CHANGELOG.md)。
+- **迭代代号**（`vN`）：开发部署号，出现在部署目录与内部文档里（Electron 缓存要求本机改代码换新目录，见上方安装注意；普通用户无感）。
+- 完整历史见 [CHANGELOG.md](CHANGELOG.md)（更早版本在 [CHANGELOG-archive.md](CHANGELOG-archive.md)）。
 
 ## 健壮性：抗阻塞与单点
 
@@ -313,16 +324,18 @@ dsh-tripipelines/
 │       ├── l1.js                         # L1 工具：lock/plan/status/spawn/send/drain/checkpoint/classify/selftest/accept
 │       ├── l2l3.js                       # L2/L3 工具：decompose/execute_local/execute_batch/review/register/local_executor
 │       └── knowledge.js                  # pipeline_scan / pipeline_ledger / pipeline_recall
+├── test/smoke/                           # 19 套回归测试（随包发布，npm test 直接跑）
 ├── skills/pipeline-orchestration/SKILL.md  # 编排技能
 ├── docs/agent-lifecycle-design.md        # 架构定稿
 ├── examples/                             # 一句话需求示例（可直接粘给 DSH）
 ├── QUICKSTART.md                         # 3 分钟上手
-├── README.md                             # 本文档
+├── README.md                             # 本文档（中文）
+├── README.en.md                          # English README（市场入口用）
 ├── TUTORIAL.md                           # 使用与配置教程
-└── CHANGELOG.md                          # 版本日志
+└── CHANGELOG.md                          # 版本日志（v109 及更早见 CHANGELOG-archive.md）
 ```
 
-`pnpm test`（在 `plugins/dsh-tripipelines/` 下）一键跑 19 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 48 断言（含看板跟随当前工作区、切换器与折叠栏同步）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）、v118 隔离 45 断言、v119 质量门出口 41 断言（register→review / 计划期验收校验 / `cmd:` 文件任务 / 里程碑阻塞项 / 兜底切分 / lock 归档 / 计数说明 / `_scratch` 跳过）、v120 研讨移交 20 断言（`/pipe-research` 唤醒 agent 问第 1 步 / 无 `followup` 宿主降级 / 空议题兜底）、v121 开工定模型 43 断言（L2/L3 发现与排序回退 / 可复制命令 / 默认落盘 / lock hint / 项目记录 / custom 校验）、v122 跨 provider 配对 26 断言（清单分组与 provider 行 / 裸模型命令自配对 / custom 自动配套 / spawn 自动纠正 / 显式 provider 尊重 / selftest degraded）、v123 L3 模式 23 断言（`mode=agent` 落盘与配套 / agent 模式 selftest / execute_local 拒绝 / executor 拒绝 spawn / auto 判引擎模型 / 裸 agent 简写 / 云端 L3 自动 agent / L2 上的 mode 被忽略）、v124 关闭三级 29 断言（off 落盘与文案 / 裸 off 简写 / off 下改模型不自愈 / mode=auto 恢复判定 / 三个执行入口逐一拒绝 / selftest 只报 disabled / setup 一步关闸与恢复 / defaults 不覆盖 off）。
+`npm test`（克隆本包后在任意目录都能跑——测试就在 `test/smoke/` 里）一键 19 套回归：配置/项目分层 82 断言、控制面 49 断言、工具工厂装配探针、看板/目录隔离、知识层 15 断言、知识层加固 32 断言（含脱敏与 recall 路径围栏）、技能字节同步检查、工作区隔离 50 断言（含看板跟随当前工作区、切换器与折叠栏同步、默认快照省略 debug 块）、质量门与角色矩阵 34 断言、生命周期 16 断言（重 plan/验收确认/drain/重派发上限/计数持久化）、审计修复 28 断言、v112 回归 40 断言（实测计量 / 协议瘦身 / off 面）、v118 隔离 45 断言、v119 质量门出口 41 断言（register→review / 计划期验收校验 / `cmd:` 文件任务 / 里程碑阻塞项 / 兜底切分 / lock 归档 / 计数说明 / `_scratch` 跳过）、v120 研讨移交 20 断言（`/pipe-research` 唤醒 agent 问第 1 步 / 无 `followup` 宿主降级 / 空议题兜底）、v121 开工定模型 52 断言（L2/L3 发现与排序回退 / 可复制命令 / 默认落盘 / lock hint / 项目记录 / custom 校验 / v125 双门合一提问）、v122 跨 provider 配对 26 断言（清单分组与 provider 行 / 裸模型命令自配对 / custom 自动配套 / spawn 自动纠正 / 显式 provider 尊重 / selftest degraded）、v123 L3 模式 23 断言（`mode=agent` 落盘与配套 / agent 模式 selftest / execute_local 拒绝 / executor 拒绝 spawn / auto 判引擎模型 / 裸 agent 简写 / 云端 L3 自动 agent / L2 上的 mode 被忽略）、v124 关闭三级 29 断言（off 落盘与文案 / 裸 off 简写 / off 下改模型不自愈 / mode=auto 恢复判定 / 三个执行入口逐一拒绝 / selftest 只报 disabled / setup 一步关闸与恢复 / defaults 不覆盖 off）、v125 市场硬化（看板默认快照脱敏 debug 块 / 双门合一提问 / 包内测试路径）。
 
 
 ---
