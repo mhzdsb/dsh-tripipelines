@@ -8,7 +8,7 @@ import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v126'
+const BUILD_TAG = 'v127'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -126,12 +126,17 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
         level1: store.context?.level1Model || cfg?.level1Model || '',
         level2: cfg?.level2Model ?? '',
       },
+      // v127 — `advisory: true` says these thresholds are guidance tuned for plain
+      // long-context degradation. With a compression proxy the raw request pressure
+      // can sit past them while the model still works fine, so the GUI paints the
+      // over-sweet state neutral (not alarming) and reserves red for near-collapse.
       level1: {
         tokens: Number(store.context?.level1Tokens) || 0,
         budget: Number(cfg?.level1ContextBudget) || 0,
         // Past the danger line the model's effective capability degrades hard.
         danger: Number(cfg?.level1DangerBudget) || 0,
         window: Number(cfg?.level1ContextWindow) || 0,
+        advisory: true,
         // v126 — how the current reading was obtained. 'tokenMeter.measure' =
         // host-measured request pressure; 'tail40' = heuristic estimate of the
         // live window; null = not measured yet. approximate=true whenever the
@@ -147,6 +152,7 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
         budget: Number(cfg?.level2ContextBudget) || 0,
         danger: Number(cfg?.level2DangerBudget) || 0,
         window: Number(cfg?.level2ContextWindow) || 0,
+        advisory: true,
         // v126 — true when at least one lead's number comes from the host meter.
         measured: agents.some((a) => a.measured === true),
       },
@@ -196,6 +202,7 @@ export function idleBoardSnapshot(cfg, stores, debugRequested = true) {
         budget: num(cfg?.level1ContextBudget),
         danger: num(cfg?.level1DangerBudget),
         window: num(cfg?.level1ContextWindow),
+        advisory: true,
         source: null,
         approximate: false,
       },
@@ -204,6 +211,7 @@ export function idleBoardSnapshot(cfg, stores, debugRequested = true) {
         budget: num(cfg?.level2ContextBudget),
         danger: num(cfg?.level2DangerBudget),
         window: num(cfg?.level2ContextWindow),
+        advisory: true,
         measured: false,
       },
     },

@@ -83,6 +83,8 @@ check('recent event type', snap.recentEvents.length === 1 && snap.recentEvents[0
 
 // v126 — context provenance ships with the reading so the GUI can badge 测/估.
 check('level1 source defaults to null when unmeasured', snap.context.level1.source === null && snap.context.level1.approximate === false)
+// v127 — thresholds are advisory; the snapshot says so.
+check('context levels marked advisory', snap.context.level1.advisory === true && snap.context.level2.advisory === true)
 r.store.context = { ...(r.store.context || {}), level1Tokens: 5000, level1Source: 'tail40', level1Approximate: true }
 const snapProv = board.buildBoardSnapshot(r, cfg)
 check('level1 carries tail40 provenance', snapProv.context.level1.source === 'tail40' && snapProv.context.level1.approximate === true)
@@ -204,6 +206,11 @@ check('client uses theme tokens', clientSrc.includes('--dsw-alias-'))
 check('client badges measured vs estimated readings', clientSrc.includes("'测'") && clientSrc.includes("'估'"))
 check('client dropped the three-zone gradient track', !clientSrc.includes('linear-gradient(to right, rgba(52,211,153,.88) 0'))
 check('client keeps sweet/danger thresholds in tooltips only', clientSrc.includes('甜点') && clientSrc.includes('危险线') && !clientSrc.includes('sweetPct'))
+// v127 — past-sweet paints neutral steel, amber only shades the last stretch before
+// the danger line, red stays reserved for near-collapse; tooltip says it is advisory.
+check('v127 neutral past-sweet fill', clientSrc.includes("rgba(148,163,184,.85)"))
+check('v127 amber limited to near-danger band', clientSrc.includes('nearDanger'))
+check('v127 tooltip calls the lines advisory under proxies', clientSrc.includes('装了压缩代理时这是原始请求压力'))
 const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 check('package.json exports ./client', pkg.exports?.['./client'] === './client.js')
 check('package.json ships client.js', Array.isArray(pkg.files) && pkg.files.includes('client.js'))

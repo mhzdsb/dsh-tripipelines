@@ -196,12 +196,19 @@ export function measureLevel1Context(ctx, source, cfg) {
     const budget = Number(cfg.level1ContextBudget) || 64000
     const ratio = budget > 0 ? totalTokens / budget : 0
     const warnRatio = Number(cfg.level1ContextWarnRatio) > 0 ? Number(cfg.level1ContextWarnRatio) : 0.8
+    // v127 — these lines are ADVICE, not limits, and the distinction matters under
+    // a compression proxy: an ACP/billion-context session can sit far past the
+    // sweet spot yet stay sharp (the fold keeps the live window small no matter how
+    // big the raw log grew). Never tell the model "快到上限/能力打折" from pressure
+    // alone; say what changed is the RAW log, and checkpoint is optional hygiene.
     const warning = ratio >= warnRatio
-      ? `L1 上下文已到 ${Math.round(ratio * 100)}%（${totalTokens}/${budget}，阈值 ${Math.round(warnRatio * 100)}%），建议 checkpoint 交接（仅告警，不阻断）`
+      ? `L1 请求压力已达甜点的 ${Math.round(ratio * 100)}%（${totalTokens}/${budget}，阈值 ${Math.round(warnRatio * 100)}%）。若装了压缩代理，实际上下文可能仍很小、模型表现未必受影响——checkpoint 交接只是可选的整理动作（仅告警，不阻断）`
       : null
     return {
       totalTokens,
       budget,
+      danger: Number(cfg.level1DangerBudget) || 0,
+      window: Number(cfg.level1ContextWindow) || 0,
       ratio: Number(ratio.toFixed(3)),
       warnRatio,
       warning,

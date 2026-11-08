@@ -270,8 +270,9 @@ window.__ModuleLoader__.load({
               ? 'rgba(251,191,36,.18)'
               : 'rgba(255,255,255,.10)'
       const subs = snap.subtasks || { total: 0, done: 0, failed: 0 }
-      // v94 — per-level sweet-spot meters, one row each: label / value / mini bar.
-      // Green = room left, amber = near the sweet spot, red = past it.
+      // v94 — per-level meters, one row each: label / value / mini bar.
+      // v127 — green = inside the sweet spot, grey = past it (advisory only),
+      // red = past the danger line (near real collapse). See meter() for why.
       const ctxInfo = snap.context || {}
       const l1spot = ctxInfo.level1 || { tokens: 0, budget: 0 }
       const l2spot = ctxInfo.level2 || { tokens: 0, budget: 0 }
@@ -297,6 +298,13 @@ window.__ModuleLoader__.load({
       // relative to sweet/danger (colours unchanged), no tick pretending to be exact,
       // and a provenance badge — 测 = host measurement, 估 = estimate or stale cache.
       // Thresholds stay in the tooltip instead of eating card width.
+      // v127 — colour semantics follow the ADVISORY truth: sweet-spot/danger lines
+      // describe plain long-context degradation. Under a compression proxy the raw
+      // pressure can sit far past them while the model still works well, so painting
+      // amber at "past sweet spot" made healthy sessions look sick and confused
+      // users. Past-sweet is now NEUTRAL steel (a hint, not an alarm); red is
+      // reserved for past-danger = near real collapse; amber only shades the last
+      // stretch before the danger line when there is room to show it.
       const meter = (label, tokens, budget, color, key, finished, finishLabel, top, barH, caption, danger, contextWindow, badge) => {
         const cap = Number(budget) || 0
         const used = Number(tokens) || 0
@@ -306,10 +314,23 @@ window.__ModuleLoader__.load({
         const pct = finished ? 100 : Math.max(0, Math.min(100, Math.round((bas > 0 ? used / bas : 0) * 100)))
         const inDanger = lim > 0 && used >= lim
         const inWarn = cap > 0 && used >= cap && !inDanger
-        const fillColor = finished ? C.done : inDanger ? 'rgba(248,81,73,.92)' : inWarn ? 'rgba(251,191,36,.90)' : 'rgba(52,211,153,.88)'
-        const valueColor = finished ? C.done : inDanger ? C.error : inWarn ? C.warn : C.text
+        // v127 — near-collapse heads-up band: amber only inside the last 5% of the
+        // window before the danger line. A plain session at 96K/128K (danger=96K)
+        // still shades amber approaching it; a compressed session at 100K pressure
+        // on a 1M-window model stays neutral steel, not alarmist.
+        const nearDanger = inWarn && lim > 0 && win > 0 && used / win >= Math.max(0, lim / win - 0.05)
+        const fillColor = finished
+          ? C.done
+          : inDanger
+            ? 'rgba(248,81,73,.92)'
+            : nearDanger
+              ? 'rgba(251,191,36,.90)'
+              : inWarn
+                ? 'rgba(148,163,184,.85)'
+                : 'rgba(52,211,153,.88)'
+        const valueColor = finished ? C.done : inDanger ? C.error : nearDanger ? C.warn : inWarn ? C.sub : C.text
         const titleText = lim > 0
-          ? `${label}｜当前 ${fmtCount(used)}／甜点 ${fmtCount(cap)}／危险线 ${fmtCount(lim)}／窗口 ${fmtCount(win)}（红区=能力打折）· ${badge === '测' ? '宿主实测的请求压力；装了压缩代理时可能与实际计费口径不同' : '估算值，仅供趋势参考'}`
+          ? `${label}｜当前 ${fmtCount(used)}／甜点 ${fmtCount(cap)}／危险线 ${fmtCount(lim)}／窗口 ${fmtCount(win)}。装了压缩代理时这是原始请求压力，实际上下文可能小得多、表现照常——灰色=过甜点仅提示，琥珀=逼近危险线，红色=过线才建议 checkpoint（数值见各条）`
           : label
         return h(
           'div',
@@ -382,8 +403,9 @@ window.__ModuleLoader__.load({
                 overflow: 'hidden',
               },
             },
-            // Single fill: green until the sweet spot, amber through the headroom,
-            // red past the danger line. No zone boundaries painted — they were the
+            // Single fill: green until the sweet spot, neutral steel through the
+            // advisory headroom (past-sweet is a hint, not an alarm — v127), red
+            // only past the danger line. No zone boundaries painted — they were the
             // part that implied false precision.
             h('div', {
               style: {

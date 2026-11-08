@@ -2,6 +2,25 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v127 — 1.31.0（甜点区/危险线改为"仅提示"口径：过甜点不再报警，压缩代理下不误判）
+
+### 变更
+- **颜色语义重定**：v126 的读数诚实了，但阈值本身还在说谎——装了压缩代理（billion-context/ACP 这类）后，`tokenMeter.measure()` 的请求压力可以远超甜点线甚至危险线，而实际折叠后的上下文很小、模型表现照常；旧配色把这种健康会话涂成琥珀/红，用户看卡片就误判"快爆了"。现在**过甜点 = 中性钢灰（仅提示）**，琥珀只涂逼近危险线的最后 5% 窗口带（`nearDanger`），红色保留给真正过危险线≈接近崩溃。数值与百分比照旧显示，tooltip 明写「装了压缩代理时这是原始请求压力，实际上下文可能小得多、表现照常」。
+- **快照声明 advisory**：`buildBoardSnapshot`/`idleBoardSnapshot` 的 `context.level1/level2` 增加 `advisory: true`，看板与消费方从此知道这些线是长上下文退化经验的建议值，不是硬限制（延续 v119 warningOnly 的思路）。
+- **L1 警告文案改写**（dsh-compat.js）：过阈值时的 warning 从"上下文已到 X%，建议 checkpoint 交接"改为"请求压力已达甜点的 X%……压缩代理下实际上下文可能仍很小、表现照常——checkpoint 只是可选整理动作"；measure 结果同时携带 `danger`/`window` 字段供上层显示。
+- **SKILL 检查点规则条件化**：Phase「L1 checkpoint / restart」不再单纯按 `ratio >= level1ContextWarnRatio` 提议交接——先判断是否处于压缩代理之下（拿不准就不提议），话术改为"原始请求压力已过甜点区（压缩代理下实际可能仍很小），要做一次 checkpoint 吗？"，并明令禁止仅凭压力数字宣称能力下降。
+- `/pipe-config` 里 `level1/level2DangerBudget`、`level1ContextWarnRatio` 的说明同步改为"提醒线，非硬限制"口径。
+- 板卡其余行为（单条填充、测/估徽章、待验收行、折叠 rail）不变。
+
+### 测试
+- `v92_board_smoke.mjs` +4 断言（context 双层 `advisory:true`；client 存在中性灰填充串；`nearDanger` 逻辑存在；tooltip 含"原始请求压力"声明），dev/test 双拷贝字节一致均 ALL PASS。
+- 全量 19 套回归 exit 0；协议长度 auto=1163 / off=1164 < 1200 护栏。
+
+### 文档
+- README.md / README.en.md：GUI 看板行与 ASCII 示意图标注新配色语义（灰=仅提示、压缩代理下颜色仅供参考）；TUTORIAL/QUICKSTART 无需改动（未涉及配色）。
+
+版本 1.30.0 → 1.31.0（行为变化：看板过甜点不再显黄/红警报，只有逼近危险线才琥珀、过线才红；一切阈值文案统一为"仅提示"口径）。
+
 ## v126 — 1.30.0（看板负载条说实话：单条填充 + 测/估徽章，三区渐变退役）
 
 ### 变更
