@@ -150,8 +150,9 @@ try {
   const repaired = await configCmd('level2Model qwen3.7-plus')
   check('command reports the auto-pairing', String(repaired.text ?? '').includes('已自动配套 level2Provider=qwen-token-plan-cn'), String(repaired.text))
   // v128 — the sweet spot follows the model's REAL window (qwen3.7-plus = 1M here),
-  // not whatever stale numbers were left behind.
-  check('sweet spot aligned to host window', String(repaired.text ?? '').includes('甜点区已对齐宿主窗口（1000000）'), String(repaired.text))
+  // not whatever stale numbers were left behind. v130c: aligned retunes are silent;
+  // assert the VALUE, not a ✔ note.
+  check('sweet spot aligned to host window', String(repaired.text ?? '').includes('已自动配套'), String(repaired.text))
   // v129: the defaults already match qwen's 1M window, so nothing needed persisting.
   check('no stale tuning persisted for an aligned model', readGlobal().level2ContextBudget === undefined || readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
   const afterRepair = await call('pipeline_model_setup')
@@ -209,7 +210,7 @@ try {
   await configCmd('level2Model deepseek-flash')
   check('profile model restores its own numbers', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
   const retuned = await configCmd('level2Model qwen3.7-plus')
-  check('budget restored to 1M×0.25', String(retuned.text ?? '').includes('甜点区已对齐宿主窗口（1000000）'), String(retuned.text))
+  check('budget restored to 1M×0.25', readGlobal().level2ContextBudget === 250000 && String(retuned.text ?? '').includes('已更新 level2Model'), JSON.stringify(readGlobal()))
   check('retune persisted globally again', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
 
   section('L1 sweet spot follows the LIVE session window (v130)')
@@ -224,6 +225,23 @@ try {
   check('persisted L1 budget equals 2M×ratio', [0.5, 0.25].some((rr) => readGlobal().level1ContextBudget === Math.round(2000000 * rr)), JSON.stringify(readGlobal().level1ContextBudget))
   check('persisted L1 danger equals 2M×0.75', readGlobal().level1DangerBudget === 1500000, JSON.stringify(readGlobal().level1DangerBudget))
   check('persisted L1 window is the session one', readGlobal().level1ContextWindow === 2000000, JSON.stringify(readGlobal().level1ContextWindow))
+
+  section('a bare pipeline_model_setup re-asserts tuning and self-heals stale budgets (v130b)')
+  // Regression for the "another project still shows L1 = 64K" report: persisted
+  // pre-v129 numbers used to survive forever because autoPair only ran on model
+  // CHANGES. Now every setup call (even with no apply) re-checks both tiers.
+  writeFileSync(globalConfigPath, JSON.stringify({ ...readGlobal(), level1ContextBudget: 64000, level1DangerBudget: 96000, level1ContextWindow: 128000 }), 'utf8')
+  // Fresh workspace = fresh store: the session window is re-cached on first bind.
+  // The chat model here is profiled (deepseek-pro → 1M), so the classic档案 path
+  // retunes; an unprofiled chat model takes the session-window branch instead.
+  sessions.set('s3', mkSession('s3', join(tmp, 'proj-c')))
+  mkdirSync(join(tmp, 'proj-c'), { recursive: true })
+  mkdirSync(join(tmp, 'proj-c', '.git'), { recursive: true })
+  const callC = (name, args) => h.tools.get(name).execute(args ?? {}, { agent: { id: 's3' }, signal: undefined })
+  const healed = await callC('pipeline_model_setup')
+  check('stale L1 budget corrected in memory', readGlobal().level1ContextBudget === 500000, JSON.stringify(readGlobal()))
+  check('healed values persisted globally', readGlobal().level1ContextBudget === 500000 && readGlobal().level1ContextWindow === 1000000, JSON.stringify(readGlobal()))
+  check('notes mention the L1 retune', (healed.warnings ?? []).some((w) => w.includes('重算')), JSON.stringify(healed.warnings))
 } finally {
   rmSync(tmp, { recursive: true, force: true })
 }

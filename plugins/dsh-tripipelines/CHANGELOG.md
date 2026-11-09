@@ -2,6 +2,24 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v131 — 1.34.1（甜点区自愈：任何 setup 调用都会纠正陈旧数值）
+
+### 变更
+- **回答"另一个项目 L1 还是 64K"**：v128/v129/v130 的重算只在**模型键发生变化**时触发；老配置里持久化的陈旧 level1/level2 三值（pre-v129 的 64000/96000/128000）与默认值不同、又被 `savePersistedConfig` 原样保留，于是永远没人去修它。
+- `autoPairAfterConfig` 现在在**每次调用**时都重新断言两级的甜点区（不再只在 changed 含模型键时跑）：L1 优先会话实测窗口 → 档案/宿主兜底，L2 走 resolveHostTuning；全部对齐时保持静默（v130c——该函数现在每条 setup / 带 provider 的模型命令都会跑，✔ 刷屏会淹没真正的改动，只有 🔧 修正与 ℹ️ 查不到窗口的提示会上屏）。
+- 甜点区重算整体上移到 `level3Mode==='off'` 早退之前：关三级的工作区同样自愈。
+- l1.js `pipeline_model_setup`：**裸调用（inspect only）**也会执行配对+重算并把修正值落盘（heal 持久化写回全局 config），返回值 `warnings` 在无 apply 时携带这些 notes；apply 路径同样补齐 healPatch 落盘。
+- 本机 live 配置同步修复：删除残留的 `level1ContextBudget: 64000` 陈旧持久化键（v131 逻辑本可自愈，但直接清掉更干净）。
+
+### 测试
+- v122 跨 provider 配对 35→38 断言：新段"a bare pipeline_model_setup re-asserts tuning and self-heals stale budgets (v130b)"——手工写入陈旧三值后用全新工作区（fresh store，会话窗口重新缓存）调裸 setup，断言 level1 三值被档案路径重算（deepseek-pro×0.5=500K）、落盘、notes 含"重算"。两处拷贝同步跑绿。
+- 全量 npm test exit 0（19 套）；v121 52、v123 23、v124 29 不受影响（silent-align 改动后 v122 两条 ✔-文本断言改为值断言）。
+
+### 文档
+- README/TUTORIAL/QUICKSTART 无需改动（自愈属于既有"甜点区自适应"承诺的实现补全）。
+
+版本 1.34.0 → 1.34.1（行为变化：陈旧甜点区数值会在第一次 pipeline_model_setup 时被自动纠正并落盘，无论是否换模型）。
+
 ## v130 — 1.34.0（L1 甜点区跟着当前会话模型走）
 
 ### 变更

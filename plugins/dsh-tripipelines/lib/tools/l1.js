@@ -7,7 +7,7 @@ import { text, LEVEL2_NAMES, TASK_STATES, estimateTokens, ensureDir, numCfg, jso
 import { validateTaskPlan, validateAcceptanceCriteria, cleanupExpiredL2s } from '../gates.js'
 import { milestoneStates, loadActivation, saveActivation, loadModelSetup, saveModelSetup, addRunUsage, storeToBoard } from '../store.js'
 import { buildL2LeadPrompt } from '../prompts.js'
-import { MODEL_PROFILES, savePersistedConfig, tuneSweetSpot } from '../config.js'
+import { DEFAULT_CONFIG, MODEL_PROFILES, savePersistedConfig, tuneSweetSpot } from '../config.js'
 import {
   autoPairAfterConfig,
   buildModelSetupQuestion,
@@ -124,6 +124,10 @@ export function makeModelSetupTool(ctx, cfg, r) {
       const defaults = { level2: pickDefaultLevel2(l2, cfg), level3: pickDefaultLevel3(l3, cfg) }
       const apply = args.apply === 'defaults' || args.apply === 'custom' ? args.apply : null
       const warnings = []
+      // v130b — a bare setup call (no apply) still re-asserts pairing + sweet-spot
+      // tuning so stale pre-v129 budgets self-heal; its notes ride on `warnings`
+      // too, same as an apply path.
+      let idleNotes = []
       let applied = null
       if (apply) {
         const patch = {}
@@ -174,15 +178,17 @@ export function makeModelSetupTool(ctx, cfg, r) {
             }
             set('level3Model', requested.level3Model, cfg.level3Model)
             set('level3Mode', requested.level3Mode, cfg.level3Mode)
-            if (requested.level3Model) {
-              const pairNotes = await autoPairAfterConfig(
-                ctx,
-                cfg,
-                requested.level3Mode ? ['level3Model', 'level3Mode'] : ['level3Model'],
-                { store: r.store },
-              )
-              warnings.push(...pairNotes)
-            }
+            // v130b — pairing + tuning now runs for EVERY apply path (defaults and
+            // custom alike), not just when L3 changed: a bare pipeline_model_setup
+            // re-asserts provider pairing and self-heals stale sweet-spot budgets.
+            const l3Changed = Boolean(requested.level3Model)
+            const pairNotes = await autoPairAfterConfig(
+              ctx,
+              cfg,
+              l3Changed ? (requested.level3Mode ? ['level3Model', 'level3Mode'] : ['level3Model']) : [],
+              { store: r.store },
+            )
+            warnings.push(...pairNotes)
           }
           // v122 — carry the provider with the model. A model id is only valid on
           // the providers that advertise it; letting `qwen3.7-plus` ride on
@@ -202,13 +208,31 @@ export function makeModelSetupTool(ctx, cfg, r) {
           set('level2Model', requested.level2Model, cfg.level2Model)
           set('level2Provider', requested.level2Provider, cfg.level2Provider)
         }
-        // Same sweet-spot contract as /pipe-config level2Model.
+        // v130b — every setup call re-asserts tuning + pairing (self-heals stale
+        // persisted budgets); an explicit L2 model change also syncs the profile
+        // numbers synchronously, same contract as /pipe-config level2Model.
         if (patch.level2Model && cfg.autoTuneSweetSpot !== false) {
           const tune = tuneSweetSpot(cfg, 'level2Model', MODEL_PROFILES)
           for (const change of tune.changes ?? []) patch[change.field] = change.to
         }
         const changed = Object.keys(patch)
-        if (changed.length > 0) savePersistedConfig(patch)
+        let pairNotes = []
+        try {
+          pairNotes = await autoPairAfterConfig(
+            ctx,
+            cfg,
+            apply ? ['level2Model'] : [],
+            { store: r.store },
+          )
+        } catch { /* best-effort; config changes above already persisted */ }
+        if (pairNotes.length > 0) warnings.push(...pairNotes)
+        // v130b — the async pairing may have corrected sweet-spot keys too; persist
+        // them as well, otherwise the healed numbers live in memory only.
+        const healPatch = {}
+        for (const k of ['level1ContextWindow', 'level1ContextBudget', 'level1DangerBudget', 'level2ContextWindow', 'level2ContextBudget', 'level2DangerBudget', 'level2Provider', 'level3Provider', 'level3Mode']) {
+          if (patch[k] === undefined && cfg[k] !== DEFAULT_CONFIG[k]) healPatch[k] = cfg[k]
+        }
+        savePersistedConfig({ ...patch, ...healPatch })
         saveModelSetup(r.stateDir, {
           mode: apply,
           level2Model: cfg.level2Model,
@@ -227,6 +251,18 @@ export function makeModelSetupTool(ctx, cfg, r) {
           level3Mode: cfg.level3Mode,
           warnings,
         }
+      } else {
+        // v130b — bare call (inspect only): still re-assert pairing + tuning so a
+        // workspace with stale pre-v129 budgets self-heals without the user having
+        // to touch any model command. Persist whatever the retune corrected.
+        try {
+          idleNotes = await autoPairAfterConfig(ctx, cfg, [], { store: r.store })
+        } catch { /* best-effort */ }
+        const heal = {}
+        for (const k of ['level1ContextWindow', 'level1ContextBudget', 'level1DangerBudget', 'level2ContextWindow', 'level2ContextBudget', 'level2DangerBudget', 'level2Provider', 'level3Provider', 'level3Mode']) {
+          if (cfg[k] !== DEFAULT_CONFIG[k]) heal[k] = cfg[k]
+        }
+        if (Object.keys(heal).length > 0) savePersistedConfig(heal)
       }
       const current = { level2Provider: cfg.level2Provider, level2Model: cfg.level2Model, level3Model: cfg.level3Model, level3Provider: cfg.level3Provider, level3Mode: cfg.level3Mode }
       const activationMergedNow = activationOpen && !args.activation && !alreadyConfigured
@@ -248,7 +284,7 @@ export function makeModelSetupTool(ctx, cfg, r) {
         l3: l3.models,
         sources: { l2: l2.source, l3: l3.source },
         errors: [...l2.errors, ...l3.errors],
-        warnings,
+        warnings: apply ? warnings : idleNotes,
         question: buildModelSetupQuestion({ defaults, level3Mode: cfg.level3Mode, activation: activationMergedNow ? true : activationOpen ? undefined : false }),
         message,
         next: applied

@@ -8,7 +8,7 @@ import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
 
-const BUILD_TAG = 'v130'
+const BUILD_TAG = 'v131'
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()

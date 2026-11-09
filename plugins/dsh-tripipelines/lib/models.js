@@ -468,8 +468,18 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
   // board never paints an honest-looking meter against stale defaults (a 1M-window
   // qwen measured against deepseek-flash's old 32K/96K/128K). resolveHostTuning
   // reads ctx.get('llm') directly — no cfg injection needed.
-  const retune = async (tierKey, label) => {
-    if (!set.has(tierKey) || cfg.autoTuneSweetSpot !== true) return
+  // v130b — `changed` is empty on the "just run pipeline_model_setup" path, which
+  // used to skip retuning entirely: a workspace could keep pre-v129 stale budgets
+  // forever (user report: another project still showed L1 = 64K). Whenever any
+  // model key moves OR autoPair runs at all, re-assert both tiers' tuning.
+  // The tune helpers are hoisted ABOVE the level3Mode==='off' early-return so an
+  // off-mode setup call still self-heals stale budgets instead of skipping them.
+  // v130c — notes stay SILENT when everything already aligns: this now runs on
+  // every setup call and even /pipe-config level2Model x provider=y, so "✔ 已对齐"
+  // would repeat everywhere and bury real changes. Only 🔧 corrections and ℹ️
+  // can't-determine notes surface.
+  const tune = async (tierKey, label) => {
+    if (cfg.autoTuneSweetSpot !== true) return
     const t = await resolveHostTuning(ctx, cfg, tierKey, { timeoutMs })
     if (!t) {
       notes.push(`ℹ️ ${label} ${cfg[tierKey]}：内置档案与宿主都查不到窗口，甜点区保持现值——看板会标注“未知”，不画假刻度`)
@@ -477,19 +487,19 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
     }
     const keys = TUNE_TARGETS[tierKey]
     const pairs = [[keys.window, t.window], [keys.budget, t.budget], [keys.danger, t.danger]]
-    let any = false
     for (const [field, to] of pairs) {
       if (cfg[field] !== to) {
         notes.push(`🔧 ${field}: ${cfg[field]} → ${to}（按${t.source === 'host' ? '宿主上报' : '内置档案'}窗口 ${t.window} 重算）`)
         cfg[field] = to
         patch[field] = to
-        any = true
       }
     }
-    if (!any) notes.push(`✔ ${label} 甜点区已对齐${t.source === 'host' ? '宿主' : '档案'}窗口（${t.window}）`)
   }
-  await retune('level2Model', 'L2 甜点区')
-  // v130 — L1 is not a config key: it's whatever model the chat session runs (v95).
+  const retune = async (tierKey, label) => {
+    if (!set.has(tierKey)) return
+    await tune(tierKey, label)
+  }
+  // L1 is not a config key: it's whatever model the chat session runs (v95).
   // bindSession caches its real window on store.context.level1Window; use that to
   // keep the L1 sweet spot honest when no profile knows the chat model. The async
   // host lookup in resolveHostTuning reads cfg.level1Model, which is display-only
@@ -502,23 +512,21 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
       const ratio = Number.isFinite(cfg[l1Keys.ratio]) && cfg[l1Keys.ratio] > 0 ? Number(cfg[l1Keys.ratio]) : FALLBACK_SWEET_RATIO
       const dangerRatio = Number.isFinite(cfg[l1Keys.dangerRatio]) && cfg[l1Keys.dangerRatio] > 0 ? Number(cfg[l1Keys.dangerRatio]) : FALLBACK_DANGER_RATIO
       const t = { window: liveWindow, budget: Math.round(liveWindow * ratio), danger: Math.round(liveWindow * dangerRatio), source: 'session' }
-      let any = false
       for (const [field, to] of [[l1Keys.window, t.window], [l1Keys.budget, t.budget], [l1Keys.danger, t.danger]]) {
         if (cfg[field] !== to) {
           notes.push(`🔧 ${field}: ${cfg[field]} → ${to}（按会话实测窗口 ${t.window} 重算 L1）`)
           cfg[field] = to
           patch[field] = to
-          any = true
         }
       }
-      if (!any) notes.push(`✔ L1 甜点区已对齐会话模型窗口（${t.window}）`)
-    } else if (set.has('level1Model') || !liveWindow) {
+    } else {
       // profiled chat model, or no cached window yet — the classic path tunes from
       // cfg.level1Model (a display fallback); with neither signal there is nothing
-      // better to use, so still try it.
-      await retune('level1Model', 'L1')
+      // better to use, so still re-assert it (self-heals stale persisted budgets).
+      await tune('level1Model', 'L1')
     }
   }
+  await retune('level2Model', 'L2 甜点区')
 
   if (set.has('level3Model') && cfg.level3Model) {
     // `mode=auto` means "detect", so only an explicit executor/agent survives
