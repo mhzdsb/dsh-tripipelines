@@ -137,7 +137,9 @@ FIRST thing in every project, before the requirement interview or any lock:
    The choice persists like \`/pipe-config\` (global \`~/.dsh/pipeline/config.json\`); per-project
    override still possible in \`<devDir>/pipeline-project.json\`. 甜点区 follows automatically
    (autoTuneSweetSpot on): built-in profile first, then the host-reported context window
-   for models with no profile (v128) — never stale defaults. If neither knows the window,
+   for models with no profile (v128) — never stale defaults. L1 is special: it's the
+   chat model you're running, so its line follows the live session window when no
+   profile knows it (v130). If neither knows the window,
    the tool says so and the board marks the meter "未知"; you can hand-set the keys.
 
 Taking over an EXISTING repo — read knowledge, not the whole tree (v98/v99):

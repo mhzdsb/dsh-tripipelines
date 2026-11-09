@@ -442,7 +442,7 @@ export async function resolveHostTuning(ctx, cfg, tierKey, { timeoutMs = 2500 } 
 // plugin wraps it with this best-effort follow-up: the provider (and for L3 the
 // mode) must follow the model or the API rejects it with "supported API model
 // names are ...". Mutates cfg, persists only the keys it corrected, returns notes.
-export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 2500 } = {}) {
+export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 2500, store = null } = {}) {
   const set = new Set(Array.isArray(changed) ? changed : [])
   const notes = []
   const patch = {}
@@ -488,8 +488,37 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
     }
     if (!any) notes.push(`✔ ${label} 甜点区已对齐${t.source === 'host' ? '宿主' : '档案'}窗口（${t.window}）`)
   }
-  await retune('level1Model', 'L1')
   await retune('level2Model', 'L2 甜点区')
+  // v130 — L1 is not a config key: it's whatever model the chat session runs (v95).
+  // bindSession caches its real window on store.context.level1Window; use that to
+  // keep the L1 sweet spot honest when no profile knows the chat model. The async
+  // host lookup in resolveHostTuning reads cfg.level1Model, which is display-only
+  // for L1 and would tune against the WRONG model — so here the cached window wins.
+  if (cfg.autoTuneSweetSpot === true) {
+    const live = store?.context || {}
+    const l1Keys = TUNE_TARGETS.level1Model
+    const liveWindow = Number(live.level1Window) > 0 ? Math.round(Number(live.level1Window)) : null
+    if (liveWindow && !MODEL_PROFILES[live.level1Model]) {
+      const ratio = Number.isFinite(cfg[l1Keys.ratio]) && cfg[l1Keys.ratio] > 0 ? Number(cfg[l1Keys.ratio]) : FALLBACK_SWEET_RATIO
+      const dangerRatio = Number.isFinite(cfg[l1Keys.dangerRatio]) && cfg[l1Keys.dangerRatio] > 0 ? Number(cfg[l1Keys.dangerRatio]) : FALLBACK_DANGER_RATIO
+      const t = { window: liveWindow, budget: Math.round(liveWindow * ratio), danger: Math.round(liveWindow * dangerRatio), source: 'session' }
+      let any = false
+      for (const [field, to] of [[l1Keys.window, t.window], [l1Keys.budget, t.budget], [l1Keys.danger, t.danger]]) {
+        if (cfg[field] !== to) {
+          notes.push(`🔧 ${field}: ${cfg[field]} → ${to}（按会话实测窗口 ${t.window} 重算 L1）`)
+          cfg[field] = to
+          patch[field] = to
+          any = true
+        }
+      }
+      if (!any) notes.push(`✔ L1 甜点区已对齐会话模型窗口（${t.window}）`)
+    } else if (set.has('level1Model') || !liveWindow) {
+      // profiled chat model, or no cached window yet — the classic path tunes from
+      // cfg.level1Model (a display fallback); with neither signal there is nothing
+      // better to use, so still try it.
+      await retune('level1Model', 'L1')
+    }
+  }
 
   if (set.has('level3Model') && cfg.level3Model) {
     // `mode=auto` means "detect", so only an explicit executor/agent survives

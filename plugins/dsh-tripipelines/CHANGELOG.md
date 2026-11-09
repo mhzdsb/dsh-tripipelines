@@ -2,6 +2,23 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v130 — 1.34.0（L1 甜点区跟着当前会话模型走）
+
+### 变更
+- **回答"那 L1 呢？"**：v129 把档案里 deepseek 全家族改成 1M，但 L1 从来不是配置项——它是用户给这个对话选的模型（v95）。此前 `level1ContextBudget` 只按 `cfg.level1Model`（一个显示用兜底值，默认 deepseek-pro）查档案；换成档案外的聊天模型（如 qwen3.8-flash）时 L1 线不会跟随。
+- `autoPairAfterConfig` 新增可选 `{ store }` 参数：任何模型命令触发配对时，若**当前会话模型没有内置档案**且 bindSession 缓存了实测窗口（`store.context.level1Window`），直接按该窗口 × 比例重算 level1 三值并落盘（`🔧 …按会话实测窗口 N 重算 L1`；已对齐则静默 `✔`）；有档案或拿不到窗口时退回原 `retune('level1Model')` 路径。注意 resolveHostTuning 的宿主查询读的是 cfg.level1Model（显示兜底），对 L1 会查错模型，所以这里以会话缓存为准、不做异步查询。
+- 调用点接线：plugin.js `/pipe-config` handler 传 `registry.peek(invocation)?.r?.store`；l1.js `pipeline_model_setup` custom 分支传 `r.store`。首次工具调用即 bindSession 填充缓存，之后每条模型命令自动校准。
+- SKILL Phase 0 第 4 条补写 L1 特殊性（synced 16792 chars，字节同步 PASS）。
+
+### 测试
+- v122 跨 provider 配对 31→35 断言：新段"L1 sweet spot follows the LIVE session window"——fake 会话上报 qwen3.8-flash / 2M 窗口后发一条 L2 模型命令，断言文本含"按会话实测窗口 2000000 重算 L1"，且全局文件 level1ContextBudget ∈ {1M(×0.5), 500K(×0.25)}、level1DangerBudget=1500000、level1ContextWindow=2000000。dev/test 双拷贝同步跑绿。
+- 全套 19 套件 exit 0；skill_sync_check PASS。
+
+### 文档
+- README.md / README.en.md 甜点区自适应段落补 v130 注（L1 跟随会话实测窗口）。
+
+版本 1.33.0 → 1.34.0（行为变化：无档案聊天模型的 L1 甜点/危险/窗口值按会话上报的真实窗口自动重算，不再停在 level1Model 兜底档案上）。
+
 ## v129 — 1.33.0（甜点区基准修正：V4 家族窗口是 1M，不是 128K）
 
 ### 变更

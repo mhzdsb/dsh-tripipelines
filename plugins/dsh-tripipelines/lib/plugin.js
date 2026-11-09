@@ -294,7 +294,10 @@ function apply(ctx, config) {
       const result = handleConfigCommand(cfg, invocation.rawInput)
       if (result?.kind !== 'success' || !Array.isArray(result.changed) || result.changed.length === 0) return result
       try {
-        const notes = await autoPairAfterConfig(ctx, cfg, result.changed)
+        // v130 — pass the workspace store so the L1 retune can read the live
+        // session's real context window (store.context.level1Window).
+        const l1Store = registry.peek?.(invocation)?.r?.store ?? null
+        const notes = await autoPairAfterConfig(ctx, cfg, result.changed, { store: l1Store })
         if (notes.length > 0) result.text = `${result.text}\n${notes.join('\n')}`
       } catch {
         // pairing is best-effort; the config change itself already succeeded

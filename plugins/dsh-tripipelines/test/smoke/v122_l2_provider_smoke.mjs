@@ -211,6 +211,19 @@ try {
   const retuned = await configCmd('level2Model qwen3.7-plus')
   check('budget restored to 1M×0.25', String(retuned.text ?? '').includes('甜点区已对齐宿主窗口（1000000）'), String(retuned.text))
   check('retune persisted globally again', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
+
+  section('L1 sweet spot follows the LIVE session window (v130)')
+  // L1 is whatever model the chat runs — not a config key. The fake session reports
+  // qwen3.8-flash with a 2M window; no profile knows it, so any model command must
+  // retune level1* from the session-cached window instead of cfg.level1Model's
+  // display fallback (deepseek-pro → 1M).
+  sessions.get('s1').requestContext = () => ({ provider: 'qwen-token-plan-cn', model: 'qwen3.8-flash', contextWindow: 2000000 })
+  await call('pipeline_lock_requirements', { requirement: 'l1 live window', activation: 'enable' })
+  const l1Cmd = await configCmd('level2Model qwen3.7-plus')
+  check('L1 budget retuned from the session window', String(l1Cmd.text ?? '').includes('按会话实测窗口 2000000 重算 L1'), String(l1Cmd.text))
+  check('persisted L1 budget equals 2M×ratio', [0.5, 0.25].some((rr) => readGlobal().level1ContextBudget === Math.round(2000000 * rr)), JSON.stringify(readGlobal().level1ContextBudget))
+  check('persisted L1 danger equals 2M×0.75', readGlobal().level1DangerBudget === 1500000, JSON.stringify(readGlobal().level1DangerBudget))
+  check('persisted L1 window is the session one', readGlobal().level1ContextWindow === 2000000, JSON.stringify(readGlobal().level1ContextWindow))
 } finally {
   rmSync(tmp, { recursive: true, force: true })
 }

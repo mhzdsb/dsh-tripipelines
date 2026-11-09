@@ -179,6 +179,7 @@ export function makeModelSetupTool(ctx, cfg, r) {
                 ctx,
                 cfg,
                 requested.level3Mode ? ['level3Model', 'level3Mode'] : ['level3Model'],
+                { store: r.store },
               )
               warnings.push(...pairNotes)
             }
