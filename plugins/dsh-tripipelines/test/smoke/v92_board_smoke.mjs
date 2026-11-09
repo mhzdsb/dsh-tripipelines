@@ -197,7 +197,8 @@ check('default scope dir created', existsSync(resolve(tmp, 'proj', '.dsh', 'pipe
 const clientSrc = readFileSync(new URL('client.js', root), 'utf8')
 check('client loader declares package id', clientSrc.includes("id: 'dsh-tripipelines'"))
 check('client registers sidebar.footer.action', clientSrc.includes("'sidebar.footer.action'"))
-check('client keeps a single board id (no probes)', !clientSrc.includes('pipeline-probe') && (clientSrc.match(/'pipeline-board'/g) || []).length === 1)
+// v132 (B5): the board id now appears twice by design — slot registration + locale ns.
+check('client keeps a single board id (no probes)', !clientSrc.includes('pipeline-probe') && (clientSrc.match(/'pipeline-board'/g) || []).length === 2)
 check('client has exactly one seat (no composer strip, no floating card)', !clientSrc.includes('conversation.composer.dock') && !clientSrc.includes('shell.overlay') && !clientSrc.includes('pipeline-panel'))
 check('client polls /pipeline/board', clientSrc.includes("'/pipeline/board'") && clientSrc.includes('workspace='))
 check('client keeps an idle posture', clientSrc.includes("=== 'idle'"))
@@ -214,7 +215,7 @@ check('v127 tooltip calls the lines advisory under proxies', clientSrc.includes(
 // v128 — unknown window: no fake scale. The meter shows 未知 and a neutral fill,
 // and the tooltip names the two ways to fix it (auto-align on model change / manual key).
 check('v128 unknown-window state exists', clientSrc.includes('winUnknown'))
-check('v128 percent slot says 未知 instead of a guessed pct', clientSrc.includes("winUnknown ? '未知'"))
+check('v128 percent slot says 未知 instead of a guessed pct', clientSrc.includes("winUnknown ? t('unknown_window')"))
 check('v128 unknown-window tooltip offers the manual window key', clientSrc.includes('不画假刻度') && clientSrc.includes('level1ContextWindow'))
 const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
 check('package.json exports ./client', pkg.exports?.['./client'] === './client.js')

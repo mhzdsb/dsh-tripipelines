@@ -160,17 +160,17 @@ In a fresh session type `/pipe-config` — you should see the config listing; `l
 | `maxLevel3Concurrency` | `1` | concurrent L3 slots (serial on a single local instance) |
 | `maxLevel2Retries` | `3` | L2 attempts before escalating to L1 |
 | `maxLevel2Agents` | `10` | cap on module leads |
-| `level2ContextBudget` | `32000` | L2 context budget (module sizing reference) |
+| `level2ContextBudget` | `250000` | L2 context budget (auto-retuned from the model profile since v129; module sizing reference) |
 | `level2SweetSpotRatio` | `0.25` | L2 sweet spot as a fraction of window (recomputed on model change) |
 | `level2HandoffTtlMs` | `300000` | handoff survival window for retired leads (drain forced after) |
-| `level1ContextBudget` | `64000` | L1 sweet spot (checkpoint suggested when approaching) |
+| `level1ContextBudget` | `500000` | L1 sweet spot (checkpoint suggested when approaching; auto-retuned from the live session window since v129/v130) |
 | `level1SweetSpotRatio` | `0.5` | L1 sweet-spot fraction of window |
 | `level1ContextWarnRatio` | `0.8` | L1 warning ratio |
 | `autoTuneSweetSpot` | `true` | auto-retune budgets when models change |
 | `devDir` | `dev` | process-docs directory (kept separate from production files) |
 | `level3TimeoutMs` | `900000` | L3 subtask timeout (= 15 min) |
 | `commandAcceptanceTimeoutMs` | `120000` | `cmd:` acceptance timeout in ms (v119) |
-| `level3InputBudget` | `500` | input-token cap per L3 subtask (auto-compressed above) |
+| `level3InputBudget` | `1200` | input-token cap per L3 subtask (auto-compressed above) |
 | `level3MaxOutputTokens` | `4096` | output-token cap |
 | `semanticGateThreshold` | `0.7` | quality-gate threshold; keyword-only scores cap at 0.5, so `pipeline_plan` rejects "threshold > 0.5 with non-executable acceptance" plans up front (v119) |
 | `mode` | `auto` | `auto` = per-project assessment / `on` = force three tiers / `off` = single agent |
@@ -299,6 +299,17 @@ The knowledge layer inherently reads projects and writes a knowledge base, so v1
 4. The quality gate order is "assertions > `cmd:` commands > keyword score", and assertions are **fail-closed**: no usable runner, code blocked by the static safety gate, or any failing assertion → judged failed, never rescued by keyword scoring. Semantic-only scores cap at 0.5, so under the default 0.7 threshold they cannot pass alone — `pipeline_plan` now rejects such acceptance at planning time (v119) instead of sentencing it at review.
 5. **Both JS/TS and Python supported**: JS via a `node` subprocess, Python via AST static-safety gate + subprocess; host execution can be disabled wholesale with `allowCodeExecution=false` (then assertions and `cmd:` acceptance never pass). `cmd:` is integration acceptance executed at workspace root (`pytest` / sync-check scripts), separate from the import/IO-forbidden assertion sandbox (v119).
 6. **The right way to accept file-shaped tasks**: write `cmd: python dev/check_sync.py` (the script reads files, compares, `sys.exit(nonzero)`), rather than making model code `import pathlib` through the assertion sandbox.
+
+## Security statement (read before enabling)
+
+This plugin orchestrates code execution. Know the boundaries:
+
+1. **The assertion gate is not an OS-level sandbox.** JS/TS assertions run in a `node` subprocess behind a regex static blacklist (`require` / `child_process` / `process.` / `eval(` / `Function(` / network APIs, etc.); blacklists are raise-the-cost defenses, not isolation. **Python** adds an AST walk (banned imports/names/attrs) but shares that posture and needs `python` on PATH — without it assertions fail closed with a diagnostic.
+2. **`cmd:` acceptance executes arbitrary commands at workspace root** (`shell:true`, 120 s default timeout). That is by design for integration checks (`pytest`, build scripts); turn it off if you do not trust the input.
+3. **Master switch**: `/pipe-config allowCodeExecution false` stops all assertion and `cmd:` execution (judged failed, fail-closed); the pipeline still runs on semantic/manual review.
+4. **Recommended trust posture**: enable auto-execution only in trusted workspaces with trusted requirement text; keep the L3 engine endpoint on loopback (no endpoint → execution refused). The board route registers only on the host's localhost web server; the default snapshot omits absolute paths (debug block requires explicit `?debug=1`).
+5. **Where data lands**: per-workspace state under `<workspace>/.dsh/pipeline/` (board / trace / activation), global config at `~/.dsh/pipeline/config.json`. Knowledge writes pass one redaction gate (`sk-…`, AKIA, GitHub/Slack tokens, `password=` forms → `[redacted]`); `.env`/key-like files are recorded by path only, never read.
+
 
 ## Directory layout
 

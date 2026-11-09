@@ -4,11 +4,11 @@
 //
 // Self-contained plugin: Node builtins plus the injected `tools`, `systemPrompt`,
 // `skills`, and `commands` services. No external npm dependencies.
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join, relative } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
-import { DEFAULT_CONFIG, loadPersistedConfig, savePersistedConfig, migratePersistedLevel3Config, mergeConfigLayers, loadProjectConfig, handleConfigCommand } from './config.js'
+import { DEFAULT_CONFIG, loadPersistedConfig, savePersistedConfig, migratePersistedLevel3Config, mergeConfigLayers, handleConfigCommand, loadProjectConfig } from './config.js'
 import { milestoneStates, budgetRefusal, runFooter } from './store.js'
 import { createWorkspaceRegistry } from './workspaces.js'
 import { buildProtocolText, buildProtocolOffText, SKILL_BODY } from './prompts.js'
@@ -16,6 +16,7 @@ import { measureLevel1Context } from './dsh-compat.js'
 import { autoPairAfterConfig } from './models.js'
 import { installBoardRoute } from './board-route.js'
 import { RUN_FOOTER_TOOLS, withRunFooter, setResultFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
+import { resolveInside } from './util.js'
 import { makeModelSetupTool, makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
 import { makeKnowledgeTools } from './tools/knowledge.js'
 import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeReviewTool, makeSpawnLocalExecutorTool, makeRegisterOutputTool } from './tools/l2l3.js'
@@ -58,26 +59,29 @@ function definitionStore() {
   return { store, stateDir: '', record: () => ({}), tracePath: () => '', boardPath: () => '', saveRun: () => {}, snapshotBoard: () => {}, bindSession: () => true }
 }
 
-function buildEntryTools(ctx, cfg, r) {
+function buildEntryTools(ctx, cfg, r, wsCfg) {
+  // v132 (C7): tools bind the PER-ROOT merged view when the registry supplies one
+  // (project layer applied); shared/global code paths keep using the global cfg.
+  const c = wsCfg || cfg
   return [
-    makeModelSetupTool(ctx, cfg, r),
-    makeLockTool(ctx, cfg, r),
-    makePlanTool(ctx, cfg, r),
-    makeDecomposeTool(ctx, cfg, r),
-    makeExecuteLocalTool(ctx, cfg, r),
-    makeExecuteBatchTool(ctx, cfg, r),
-    makeReviewTool(ctx, cfg, r),
-    makeStatusTool(ctx, cfg, r),
-    makeSpawnModuleLeadTool(ctx, cfg, r),
-    makeSendToLeadTool(ctx, cfg, r),
-    makeDrainLeadsTool(ctx, cfg, r),
-    makeCheckpointTool(ctx, cfg, r),
-    makeClassifyTool(ctx, cfg, r),
-    makeSpawnLocalExecutorTool(ctx, cfg, r),
-    makeRegisterOutputTool(ctx, cfg, r),
-    makeSelftestTool(ctx, cfg, r),
-    makeAcceptMilestoneTool(ctx, cfg, r),
-    ...makeKnowledgeTools(ctx, cfg, r),
+    makeModelSetupTool(ctx, c, r),
+    makeLockTool(ctx, c, r),
+    makePlanTool(ctx, c, r),
+    makeDecomposeTool(ctx, c, r),
+    makeExecuteLocalTool(ctx, c, r),
+    makeExecuteBatchTool(ctx, c, r),
+    makeReviewTool(ctx, c, r),
+    makeStatusTool(ctx, c, r),
+    makeSpawnModuleLeadTool(ctx, c, r),
+    makeSendToLeadTool(ctx, c, r),
+    makeDrainLeadsTool(ctx, c, r),
+    makeCheckpointTool(ctx, c, r),
+    makeClassifyTool(ctx, c, r),
+    makeSpawnLocalExecutorTool(ctx, c, r),
+    makeRegisterOutputTool(ctx, c, r),
+    makeSelftestTool(ctx, c, r),
+    makeAcceptMilestoneTool(ctx, c, r),
+    ...makeKnowledgeTools(ctx, c, r),
   ]
 }
 
@@ -87,13 +91,17 @@ function buildEntryTools(ctx, cfg, r) {
 // ---------------------------------------------------------------------------
 
 function apply(ctx, config) {
-  // Config layering (v82): DEFAULT_CONFIG <- apply() config <- global config.json
-  // <- project-level <devDir>/pipeline-project.json (highest priority). devDir is only
-  // known after the first three layers, so the project file is read last.
+  // Config layering (v82): DEFAULT_CONFIG <- apply() config <- global config.json.
+  // The project-level <devDir>/pipeline-project.json layer (highest priority) is merged
+  // per workspace root in registry.ensure() — v132 (C7), see below.
   const runtimeConfig = config && typeof config === 'object' ? config : {}
   const persisted = migratePersistedLevel3Config(loadPersistedConfig())
   const baseCfg = mergeConfigLayers(DEFAULT_CONFIG, runtimeConfig, persisted, null)
-  const cfg = mergeConfigLayers(baseCfg, loadProjectConfig(baseCfg.devDir), null, null)
+  // v132 (C7): the project layer is NOT read here — apply() has no workspace root yet,
+  // and resolving <devDir> against process.cwd() (the daemon/profile dir in GUI launches)
+  // silently loaded the wrong or no file. Each workspace's pipeline-project.json is now
+  // merged per-root inside registry.ensure(); cfg stays the global view for shared code.
+  const cfg = baseCfg
 
   // v103 — one fixed store per normalized workspace root. Created lazily, on the
   // first tool call / command / board request that names a session or workspace,
@@ -102,7 +110,7 @@ function apply(ctx, config) {
   const registry = createWorkspaceRegistry({
     ctx,
     cfg,
-    buildTools: (storeR) => buildEntryTools(ctx, cfg, storeR),
+    buildTools: (storeR, wsCfg) => buildEntryTools(ctx, cfg, storeR, wsCfg),
     log: (msg) => console.log(msg),
   })
 
@@ -168,7 +176,11 @@ function apply(ctx, config) {
   // read-only/diagnostic subset; /pipe-config mode auto + reload restores the
   // full surface. Runtime /pipe-off keeps the registered tools (guard refuses)
   // until the next reload.
-  const modeOff = String(cfg.mode) === 'off'
+  // v132 (C7/C8): a project can be off while the global config stays auto — when ANY
+  // known workspace carries an off project-layer, register the full surface so its
+  // guard/restore path works; workspaces that are on still refuse nothing and the
+  // per-root cfg decides dispatch.
+  const modeOff = String(cfg.mode) === 'off' && !registry.anyWorkspaceProjectOff()
 
   // 1. Routing protocol injected into every model step.
   ctx.systemPrompt.section({
@@ -200,13 +212,20 @@ function apply(ctx, config) {
   //    v112: the footer travels ON the result value, so concurrent calls from
   //    different workspaces can never render each other's run state).
   for (const t of buildEntryTools(ctx, cfg, definitionR)) {
-    if (!shouldRegisterTool(t.name, cfg)) continue
+    // v132 (C8): global off trims the surface (O8); a PROJECT-level off does not —
+    // its guard refusal below is per-workspace and reversible without reload.
+    if (!shouldRegisterTool(t.name, cfg) && !EXECUTION_TOOLS.has(t.name)) continue
     const registered = {
       ...t,
       execute: async (args, exec) => {
         const entry = registry.resolve(exec)
         if (!entry) {
           throw new Error('pipeline: 无法定位工作区（当前 session 没有 cwd）。请在项目目录里发起对话，或先调 pipeline_lock_requirements。')
+        }
+        // v132 (C7/C8): this workspace opted out via <devDir>/pipeline-project.json
+        // mode:"off" — refuse execution tools here only; other workspaces unaffected.
+        if (String(entry.cfg?.mode ?? 'auto') === 'off' && EXECUTION_TOOLS.has(t.name)) {
+          return { kind: 'error', text: `本项目已关闭三级流水线（${(entry.cfg?.devDir || DEFAULT_CONFIG.devDir)}/pipeline-project.json mode=off）；执行类工具在本工作区被拒绝。恢复：/pipe-config mode auto（会写回本项目的 project.json）。` }
         }
         // v95/v103 — adopt the model the user actually picked for this chat and
         // remember the live session for the board's L1 token meter.
@@ -254,7 +273,7 @@ function apply(ctx, config) {
   ctx.tools.guard((execution) => {
     const tier = registry.tierOf(execution)
     const entry = registry.peek(execution)
-    const adjacency = strictAdjacencyDenial(tier, entry?.r, execution, { allowLevel1Takeover: cfg.allowLevel1Takeover === true })
+    const adjacency = strictAdjacencyDenial(tier, entry?.r, execution, { allowLevel1Takeover: (entry?.cfg || cfg).allowLevel1Takeover === true })
     if (adjacency) return adjacency
     // v89 hard gate: a finished-but-unaccepted milestone blocks every advancing tool.
     if (ADVANCE_TOOLS.has(execution.name) && entry) {
@@ -272,11 +291,11 @@ function apply(ctx, config) {
       if (tier === 'unknown') {
         return '无法确认当前调用者的层级（agents.roots() 不可用）；已按 fail-closed 拒绝派发。请运行 /pipe-selftest 排查，并在项目主会话中重试。'
       }
-      if (String(cfg.mode) === 'off') {
+      if (String((entry?.cfg || cfg).mode) === 'off') {
         return '三级流水线已关闭（mode=off）；用 /pipe-config mode auto 重新启用后再派发。'
       }
       if (entry) {
-        const refusal = budgetRefusal(entry.r, cfg)
+        const refusal = budgetRefusal(entry.r, entry.cfg || cfg)
         if (refusal) return refusal
       }
     }
@@ -291,14 +310,54 @@ function apply(ctx, config) {
     description: 'view or change the three-tier orchestrator configuration (models, thresholds, budget)',
     input: { hint: '[<key> [<value>] [mode=agent] [provider=<pid>] | list | reset]' },
     handler: async (invocation) => {
-      const result = handleConfigCommand(cfg, invocation.rawInput)
+      // v132 (C7/C8): a workspace whose <devDir>/pipeline-project.json carries keys
+      // edits THAT file instead of the global config — otherwise every write here is
+      // silently re-shadowed by the project layer at the next store load.
+      let entry = null
+      try {
+        entry = registry.peek?.(invocation) ?? registry.resolve?.(invocation) ?? null
+      } catch {
+        // A host without session plumbing (verify harness, bare daemon) simply has no
+        // workspace context: fall back to the global view exactly like pre-v132.
+      }
+      const wsCfg = entry?.cfg || cfg
+      // v132 (C7): reset's project-layer warning must read the ANCHORED path
+      // (<root>/<devDir>/pipeline-project.json), not the cwd-relative legacy one.
+      const result = handleConfigCommand(wsCfg, invocation.rawInput, { workspaceRoot: entry?.root })
+      let redirected = false
+      if (result?.kind === 'success' && Array.isArray(result.changed) && result.changed.length > 0 && entry?.root) {
+        try {
+          const projLayer = loadProjectConfig(wsCfg.devDir, entry.root)
+          if (Object.keys(projLayer).length > 0) {
+            const devAbs = resolveInside(entry.root, wsCfg.devDir || DEFAULT_CONFIG.devDir, 'devDir')
+            const file = join(devAbs, 'pipeline-project.json')
+            const merged = { ...projLayer }
+            for (const k of result.changed) merged[k] = wsCfg[k]
+            mkdirSync(devAbs, { recursive: true })
+            writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8')
+            redirected = true
+            result.text = `${result.text}\n（本项目存在 ${relative(entry.root, file).replace(/\\/g, '/')}，改动已写入项目层而不是全局配置）`
+          }
+        } catch { /* best-effort: global persistence already happened */ }
+      }
       if (result?.kind !== 'success' || !Array.isArray(result.changed) || result.changed.length === 0) return result
       try {
         // v130 — pass the workspace store so the L1 retune can read the live
         // session's real context window (store.context.level1Window).
-        const l1Store = registry.peek?.(invocation)?.r?.store ?? null
-        const notes = await autoPairAfterConfig(ctx, cfg, result.changed, { store: l1Store })
+        const l1Store = entry?.r?.store ?? null
+        const notes = await autoPairAfterConfig(ctx, wsCfg, result.changed, { store: l1Store })
         if (notes.length > 0) result.text = `${result.text}\n${notes.join('\n')}`
+        // v132 (C8): pairing corrections land in the same layer as the edit above.
+        if (redirected && entry?.root) {
+          try {
+            const projLayer = loadProjectConfig(wsCfg.devDir, entry.root)
+            const devAbs = resolveInside(entry.root, wsCfg.devDir || DEFAULT_CONFIG.devDir, 'devDir')
+            const file = join(devAbs, 'pipeline-project.json')
+            const merged = { ...projLayer }
+            for (const k of Object.keys(projLayer)) if (k in wsCfg) merged[k] = wsCfg[k]
+            writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8')
+          } catch { /* best-effort */ }
+        }
       } catch {
         // pairing is best-effort; the config change itself already succeeded
       }
@@ -446,14 +505,39 @@ function apply(ctx, config) {
     name: 'pipe-off',
     description: 'turn the three-tier pipeline off (single-agent mode; existing files untouched)',
     input: { hint: '关闭三级流水线（无参数）' },
-    handler: () => {
+    handler: (invocation) => {
+      // v132 (C8): /pipe-off is a PROJECT-level exit — it used to write the GLOBAL
+      // config.json, silently disabling the pipeline in every other workspace too.
+      // Now it writes <devDir>/pipeline-project.json in the current workspace (the
+      // highest-priority layer, merged per-root by registry.ensure()), and only
+      // flips the live global view when no workspace can be resolved.
       cfg.mode = 'off'
+      const entry = registry.resolve(invocation)
+      if (entry?.root) {
+        try {
+          const devAbs = resolveInside(entry.root, (entry.cfg || cfg).devDir || DEFAULT_CONFIG.devDir, 'devDir')
+          mkdirSync(devAbs, { recursive: true })
+          const file = join(devAbs, 'pipeline-project.json')
+          let proj = {}
+          try {
+            if (existsSync(file)) {
+              const parsed = JSON.parse(readFileSync(file, 'utf8'))
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) proj = parsed
+            }
+          } catch { /* broken file: rewrite fresh */ }
+          proj.mode = 'off'
+          writeFileSync(file, JSON.stringify(proj, null, 2), 'utf8')
+          return { kind: 'success', text: `三级流水线已在本项目关闭（mode=off，写入 ${relative(entry.root, file).replace(/\\/g, '/')}），其他工作区不受影响；已生成文件不动。恢复：删除该行的 mode 或运行 /pipe-config mode auto。` }
+        } catch {
+          // fall through to global behavior below
+        }
+      }
       try {
         savePersistedConfig({ mode: 'off' })
       } catch {
         // best-effort
       }
-      return { kind: 'success', text: '三级流水线已关闭（mode=off），回到单 agent；已生成文件不动。用 /pipe-config mode auto 重新启用。' }
+      return { kind: 'success', text: '三级流水线已关闭（mode=off，全局配置——当前无法定位工作区目录），回到单 agent；已生成文件不动。用 /pipe-config mode auto 重新启用。' }
     },
   })
 

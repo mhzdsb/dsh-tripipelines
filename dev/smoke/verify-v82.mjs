@@ -255,12 +255,16 @@ async function appliedConfig(devDir) {
   return { text, level2ContextBudget: read('level2ContextBudget'), level2Model: read('level2Model'), level1ContextBudget: read('level1ContextBudget') }
 }
 
+// v132 (C7): the project layer is no longer merged at apply() time — it is anchored
+// to each workspace ROOT and merged lazily by registry.ensure(). A bare apply() with
+// no session plumbing now shows the GLOBAL view; per-project merging is covered by
+// test/smoke/v132_audit_fixes_smoke.mjs. These checks pin that new contract.
 const a = await appliedConfig(projA)
-check('project A overrides global budget', a.level2ContextBudget === '99999', JSON.stringify(a.level2ContextBudget))
-check('project A overrides global model', a.level2Model === 'deepseek-chat', JSON.stringify(a.level2Model))
+check('bare apply shows global budget (v132 anchor)', a.level2ContextBudget === '55555', JSON.stringify(a.level2ContextBudget))
+check('bare apply shows global model (v132 anchor)', a.level2Model === 'deepseek-flash', JSON.stringify(a.level2Model))
 check('project A inherits global level1ContextBudget', a.level1ContextBudget === '4096', JSON.stringify(a.level1ContextBudget))
 const b = await appliedConfig(projB)
-check('project B sees only its own override', b.level2ContextBudget === '11111', JSON.stringify(b.level2ContextBudget))
+check('bare apply B same global view (v132 anchor)', b.level2ContextBudget === '55555', JSON.stringify(b.level2ContextBudget))
 check('project B not contaminated by A model', b.level2Model === 'deepseek-flash', JSON.stringify(b.level2Model))
 const noProj = await appliedConfig(join(tmp, 'projC'))
 check('no project file -> global layer wins', noProj.level2ContextBudget === '55555', JSON.stringify(noProj.level2ContextBudget))
@@ -271,11 +275,14 @@ writeFileSync(join(tmp, 'projD', 'pipeline-project.json'), '{ broken', 'utf8')
 const d = await appliedConfig(join(tmp, 'projD'))
 check('broken project file falls back to global', d.level2ContextBudget === '55555', JSON.stringify(d.level2ContextBudget))
 
-// reset mentions project layer when a project file exists
+// reset mentions project layer when a project file exists — v132 (C7): the warning is
+// emitted from inside handleConfigCommand, which still resolves an ABSOLUTE devDir the
+// legacy way (workspaceRoot only anchors relative paths). A bare handler therefore DOES
+// warn here; per-root anchoring is covered by test/smoke/v132_audit_fixes_smoke.mjs.
 const ctxR = fakeCtx()
 pluginMod.apply(ctxR, { devDir: projA, stateDir: join(tmp, 'state-reset') })
 const resetRes = await ctxR.handlers.get('pipe-config')({ rawInput: 'reset' })
-check('reset warns about project layer', /pipeline-project\.json 仍会覆盖/.test(resetRes.text))
+check('reset warns about project layer (legacy absolute devDir)', /pipeline-project\.json 仍会覆盖/.test(resetRes.text))
 writeFileSync(tmpConfig, JSON.stringify({ level2ContextBudget: 55555, level1ContextBudget: 4096 }), 'utf8')
 
 rmSync(tmp, { recursive: true, force: true })

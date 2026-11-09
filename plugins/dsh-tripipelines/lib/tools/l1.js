@@ -50,7 +50,9 @@ function accountL2Tokens(ctx, cfg, r) {
   if (!store?.agents) return 0
   let delta = 0
   for (const a of store.agents.values()) {
-    if (!a || a.kind !== 'l2' || a.state === 'replaced' || a.state === 'failed') continue
+    // v132 (audit D1) — `archived` leads are retired like `replaced`: their host
+    // session is drained, so measuring them only re-reads a dead snapshot.
+    if (!a || a.kind !== 'l2' || a.state === 'replaced' || a.state === 'archived' || a.state === 'failed') continue
     let measured = null
     try { measured = measureSessionTokens(ctx, a.id) } catch { measured = null }
     if (typeof measured !== 'number' || !Number.isFinite(measured) || measured <= 0) continue
@@ -326,7 +328,7 @@ export function makeLockTool(ctx, cfg, r) {
             `${value.activationHint ? `\n\n${value.activationHint}` : ''}`,
         ),
     },
-    async execute(args) {
+    async execute(args, exec) {
       if (typeof args.requirement !== 'string' || !args.requirement.trim()) {
         throw new Error('requirement must be a non-empty string')
       }
@@ -355,12 +357,25 @@ export function makeLockTool(ctx, cfg, r) {
       // v119 — a new run must not inherit the previous run's L2s. They used to
       // stay `in_progress` forever and keep appearing in pipeline_status's
       // waitingFor. Archive every live lead; the record stays inspectable.
+      // v132 (audit D1) — archiving alone left the HOST session running: the
+      // spawn cap counted archived as live and cleanupExpiredL2s only reaped
+      // replaced, so repeated locks piled up ghosts that also kept burning real
+      // tokens. Drain them now (best-effort: a missing/old subagents service must
+      // not block the lock — the TTL reaper in cleanupExpiredL2s is the net).
+      const archivedIds = []
       for (const a of r.store.agents.values()) {
         if (a.state === 'in_progress' || a.state === 'replaced') {
           const prev = a.state
           a.state = 'archived'
           a.archivedAt = new Date().toISOString()
           a.reason = `superseded by a new run (was ${prev})`
+          if (a.kind === 'l2') archivedIds.push(a.id)
+        }
+      }
+      if (archivedIds.length > 0) {
+        const subs = ctx.get ? ctx.get('subagents') : undefined
+        if (subs && typeof subs.drainChildren === 'function' && exec?.agent) {
+          try { await subs.drainChildren(exec.agent, archivedIds) } catch { /* best-effort */ }
         }
       }
       r.store.runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
@@ -451,6 +466,28 @@ export function makePlanTool(ctx, cfg, r) {
       // a semantic threshold above the 0.5 cap). The error names the three ways
       // out: assertions, `cmd:` acceptance, or an explicit lower threshold.
       validateAcceptanceCriteria(tasks, cfg)
+      // v89 — acceptance milestones (state is computed lazily from task states).
+      // v132 (audit D2) — milestone taskIds are validated against the plan's own
+      // task table exactly like depends_on refs (gates.validateTaskPlan): an
+      // unknown id used to be dropped silently by milestoneStates, so a typo'd
+      // milestone could never reach `done` and the hard gate would stall forever
+      // with no clue why. Validate BEFORE the tasks loop writes anything, so a
+      // rejected plan leaves the previous board untouched.
+      const rawMilestones = Array.isArray(args.taskPlan?.milestones) ? args.taskPlan.milestones : []
+      {
+        const planIds = new Set(tasks.map((t) => t.id))
+        const bad = []
+        for (const m of rawMilestones) {
+          const mid = String(m?.id ?? '')
+          for (const tid of Array.isArray(m?.taskIds) ? m.taskIds.map(String) : []) {
+            if (!planIds.has(tid)) bad.push(`milestone ${mid || '(unnamed)'} → unknown task "${tid}"`)
+          }
+        }
+        if (bad.length > 0) {
+          throw new Error(`taskPlan.milestones 引用了不存在的任务 id：${bad.slice(0, 6).join('；')}${bad.length > 6 ? ' …' : ''}。里程碑状态由任务完成度推导，未知 id 会让该里程碑永远停在 pending。请修正 taskIds 或重新规划。`)
+        }
+      }
+      const prior = new Map((r.store.run.milestones ?? []).map((m) => [m.id, m]))
       for (const t of tasks) {
         const prevTask = r.store.tasks.get(t.id)
         r.store.tasks.set(t.id, {
@@ -467,9 +504,6 @@ export function makePlanTool(ctx, cfg, r) {
         })
         r.record('level1_main', 'pending', 'task_assignment', t.assignee ?? LEVEL2_NAMES[0], t.id, t.desc, null, t.acceptance)
       }
-      // v89 — acceptance milestones (state is computed lazily from task states).
-      const rawMilestones = Array.isArray(args.taskPlan?.milestones) ? args.taskPlan.milestones : []
-      const prior = new Map((r.store.run.milestones ?? []).map((m) => [m.id, m]))
       const nextMilestones = rawMilestones
         .map((m, i) => ({
           id: String(m?.id ?? `m${i + 1}`),
@@ -675,8 +709,10 @@ export function makeSpawnModuleLeadTool(ctx, cfg, r) {
         spawnCounts[attemptKey] = (spawnCounts[attemptKey] ?? 0) + 1
         r.saveRun()
       }
-      // Module-lead cap.
-      const liveL2 = [...r.store.agents.values()].filter((a) => a.kind === 'l2' && a.state !== 'done' && a.state !== 'replaced')
+      // Module-lead cap. v132 (audit D1) — `archived` leads are retired, not live:
+      // counting them let repeated pipeline_lock_requirements exhaust maxLevel2Agents
+      // with ghosts whose host sessions were already drained (or are about to be).
+      const liveL2 = [...r.store.agents.values()].filter((a) => a.kind === 'l2' && a.state !== 'done' && a.state !== 'replaced' && a.state !== 'archived')
       const cap = numCfg(cfg, 'maxLevel2Agents', 10)
       if (liveL2.length >= cap) {
         throw new Error(`已达 L2 上限 ${cap}：先 pipeline_drain_leads 清理已完成/旧的模块负责人，再 spawn 新模块。`)
@@ -917,11 +953,20 @@ export function makeCheckpointTool(ctx, cfg, r) {
         '',
         '## 8. 活跃 L2 状态',
       ]
-      if (agents.length === 0) lines.push('(无活跃 L2)')
-      for (const a of agents) {
+      // v132 (audit D8) — §9 only resumes `in_progress` leads, but §8 used to dump
+      // every agent ever recorded (archived ghosts from previous runs included),
+      // which misled the next cold start into re-spawning retired work. List live
+      // leads first; retired ones collapse into a one-line history note.
+      const liveAgents = agents.filter((a) => a.state === 'in_progress')
+      const retiredAgents = agents.filter((a) => a.state !== 'in_progress')
+      if (liveAgents.length === 0) lines.push('(无活跃 L2)')
+      for (const a of liveAgents) {
         const tok = a.estimatedTokens ? `, estimatedTokens=${a.estimatedTokens}` : ''
         const handoff = a.kind === 'l2' ? `, handoff=${join(handoffDir, `${a.label}_state.md`)}` : ''
         lines.push(`- ${a.label} [${a.state}] childId=${a.id}${tok}${handoff}`)
+      }
+      if (retiredAgents.length > 0) {
+        lines.push(`（历史：${retiredAgents.length} 个已结束/归档的负责人不再列出；恢复步骤只针对上面的 in_progress 条目）`)
       }
       lines.push(
         '',

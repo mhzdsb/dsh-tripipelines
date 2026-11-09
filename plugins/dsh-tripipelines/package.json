@@ -1,6 +1,6 @@
 {
   "name": "dsh-tripipelines",
-  "version": "1.34.1",
+  "version": "1.35.0",
   "description": "Three-tier model collaboration plugin for DeepSeek Harness: L1 coordinator (any model the user picks) -> L2 module leads (model configured per module) -> L3 executors (local engine over HTTP, or a cloud provider in agent mode), with strict adjacency, long-lived L2, per-task acceptance, quality gates, per-workspace run state, per-module work directories, and a live GUI status board.",
   "author": "merhentz",
   "keywords": [
@@ -19,6 +19,8 @@
     },
     "./client": "./client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
@@ -27,6 +29,8 @@
     "skills/",
     "test/",
     "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
     "README.md",
     "README.en.md",
     "QUICKSTART.md",
@@ -38,7 +42,7 @@
     "examples/"
   ],
   "scripts": {
-    "test": "node test/smoke/verify-v82.mjs && node test/smoke/v89_control_smoke.mjs && node test/smoke/v90_tool_factory_probe.mjs && node test/smoke/v92_board_smoke.mjs && node test/smoke/v98_knowledge_smoke.mjs && node test/smoke/v99_knowledge_hardening_smoke.mjs && node test/smoke/skill_sync_check.mjs && node test/smoke/v103_workspace_isolation_smoke.mjs && node test/smoke/v104_gate_roles_smoke.mjs && node test/smoke/v105_lifecycle_smoke.mjs && node test/smoke/v111_audit_fixes_smoke.mjs && node test/smoke/v112_audit_p2_smoke.mjs && node test/smoke/v118_isolation_smoke.mjs && node test/smoke/v119_gate_exit_smoke.mjs && node test/smoke/v120_research_handoff_smoke.mjs && node test/smoke/v121_model_setup_smoke.mjs && node test/smoke/v122_l2_provider_smoke.mjs && node test/smoke/v123_l3_mode_smoke.mjs && node test/smoke/v124_l3_off_smoke.mjs"
+    "test": "node test/smoke/verify-v82.mjs && node test/smoke/v89_control_smoke.mjs && node test/smoke/v90_tool_factory_probe.mjs && node test/smoke/v92_board_smoke.mjs && node test/smoke/v98_knowledge_smoke.mjs && node test/smoke/v99_knowledge_hardening_smoke.mjs && node test/smoke/skill_sync_check.mjs && node test/smoke/v103_workspace_isolation_smoke.mjs && node test/smoke/v104_gate_roles_smoke.mjs && node test/smoke/v105_lifecycle_smoke.mjs && node test/smoke/v111_audit_fixes_smoke.mjs && node test/smoke/v112_audit_p2_smoke.mjs && node test/smoke/v118_isolation_smoke.mjs && node test/smoke/v119_gate_exit_smoke.mjs && node test/smoke/v120_research_handoff_smoke.mjs && node test/smoke/v121_model_setup_smoke.mjs && node test/smoke/v122_l2_provider_smoke.mjs && node test/smoke/v123_l3_mode_smoke.mjs && node test/smoke/v124_l3_off_smoke.mjs && node test/smoke/v132_audit_fixes_smoke.mjs"
   },
   "license": "MIT",
   "homepage": "https://github.com/mhzdsb/dsh-tripipelines/tree/main/plugins/dsh-tripipelines",

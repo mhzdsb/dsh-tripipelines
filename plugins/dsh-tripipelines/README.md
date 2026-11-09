@@ -161,17 +161,17 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines')  # 本地 / de
 | `maxLevel3Concurrency` | `1` | L3 最大并发（本地单实例串行） |
 | `maxLevel2Retries` | `3` | L2 最大尝试，超限上报 L1 |
 | `maxLevel2Agents` | `10` | 二级模块负责人上限 |
-| `level2ContextBudget` | `32000` | 二级上下文预算（模块小型化参考） |
+| `level2ContextBudget` | `250000` | 二级上下文预算（v129 起按模型档案自动重算；模块小型化参考） |
 | `level2SweetSpotRatio` | `0.25` | 二级甜点区占窗口比例（换模型自动重算） |
 | `level2HandoffTtlMs` | `300000` | 旧二级交接存活毫秒（超时强制 drain） |
-| `level1ContextBudget` | `64000` | 一级上下文甜点区（接近时建议 checkpoint） |
+| `level1ContextBudget` | `500000` | 一级上下文甜点区（接近时建议 checkpoint；v129/v130 起随会话模型窗口自动重算） |
 | `level1SweetSpotRatio` | `0.5` | 一级甜点区占窗口比例 |
 | `level1ContextWarnRatio` | `0.8` | 一级上下文警告比例 |
 | `autoTuneSweetSpot` | `true` | 换模型时自动联动甜点区 |
 | `devDir` | `dev` | 开发过程文档目录（与生产文件分离） |
 | `level3TimeoutMs` | `900000` | 三级子任务超时（=15 分钟） |
 | `commandAcceptanceTimeoutMs` | `120000` | `cmd:` 验收命令超时（毫秒，v119） |
-| `level3InputBudget` | `500` | 三级子任务输入 token 上限（超过自动压缩） |
+| `level3InputBudget` | `1200` | 三级子任务输入 token 上限（超过自动压缩） |
 | `level3MaxOutputTokens` | `4096` | 三级输出 token 上限 |
 | `semanticGateThreshold` | `0.7` | 质量门阈值；仅关键词分时上限 0.5，`pipeline_plan` 会拒绝「阈值 > 0.5 且验收无法执行」的计划（v119） |
 | `mode` | `auto` | `auto`=按项目评估 / `on`=强制三级 / `off`=单 agent |
@@ -302,6 +302,17 @@ pipeline_ledger()            # 从交接文档抽决策候选
 4. 质量门是「断言 > `cmd:` 命令 > 关键词分」，断言 **fail-closed**：没有可用 runner、代码被静态安全门拦下、或任一断言失败，都判失败，不会回落关键词分。语义分本身封顶 0.5，**默认阈值 0.7 下无法单独过门**，所以 `pipeline_plan` 会在计划期直接拒绝这种验收（v119），而不是等 review 时判死。
 5. **JS/TS 与 Python 都支持**：JS 走 `node` 子进程，Python 走 AST 静态安全门 + 子进程；宿主机执行可通过 `allowCodeExecution=false` 整体关闭（关闭后断言与 `cmd:` 验收一律不通过）。`cmd:` 是集成验收，在工作区根目录执行（`pytest` / 同步检查脚本等），与禁止 import/IO 的断言沙箱分离（v119）。
 6. **文件类任务的正确写法**：验收写成 `cmd: python dev/check_sync.py`（脚本自己读文件、比对、`sys.exit(非0)`），而不是让模型代码 `import pathlib` 去过断言沙箱。
+
+## 安全声明（上架必读）
+
+本插件是「会执行代码」的编排器，请在使用前了解边界：
+
+1. **断言门不是操作系统级沙箱**。JS/TS 断言在 `node` 子进程里跑，只有一层正则静态黑名单（拦 `require` / `child_process` / `process.` / `eval(` / `Function(` / 网络 API 等）；黑名单理论上存在绕过面。**Python** 断言多一层 AST 遍历守卫（禁 import 危险模块、禁危险名字/属性），但同样属于「抬高成本」而非绝对隔离，且依赖宿主机 PATH 上有 `python`——没有时断言按 fail-closed 判失败并给出诊断。
+2. **`cmd:` 验收 = 在工作区根目录执行任意命令**（`shell:true`，超时默认 120s）。这是集成验收的设计行为，面向 `pytest` / 构建脚本这类真实检查；不信任来源时请先关闭。
+3. **总开关**：`/pipe-config allowCodeExecution false` 后，断言与 `cmd:` 一律不执行、判不通过（fail-closed），流水线仍可纯语义/人工评审运行。
+4. **建议的信任前提**：只在可信工作区、可信需求文本下启用三级自动执行；L3 本地引擎端点请保持本机回环地址（默认无端点即拒绝执行）。看板路由仅注册在宿主 localhost Web 服务上，默认快照不含绝对路径（debug 块需显式 `?debug=1`）。
+5. **数据落盘位置**：每个工作区的状态写在 `<workspace>/.dsh/pipeline/`（看板/trace/激活记录），全局配置在 `~/.dsh/pipeline/config.json`；知识索引写文件前统一过密钥脱敏（`sk-…`、AKIA、GitHub/Slack token、`password=` 形态 → `[redacted]`），`.env`/私钥类文件只记路径、绝不读取内容。
+
 
 ## 目录结构
 

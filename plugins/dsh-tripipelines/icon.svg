@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- dsh-tripipelines: three tiers (L1 coordinator -> L2 leads -> L3 executors) as a falling-edge "M" wordmark, brand orange #ff8a3d -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#1c1f26"/>
+  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="13.25" fill="none" stroke="#ff8a3d" stroke-opacity="0.35" stroke-width="1.5"/>
+  <path d="M14 46 V20 L24 34 L34 20 V46" fill="none" stroke="#ff8a3d" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="46" cy="22" r="3.5" fill="#60a5fa"/>
+  <circle cx="46" cy="34" r="3.5" fill="#60a5fa" opacity="0.75"/>
+  <circle cx="46" cy="46" r="3.5" fill="#60a5fa" opacity="0.5"/>
+</svg>

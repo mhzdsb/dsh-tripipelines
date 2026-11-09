@@ -1,4 +1,6 @@
 # dsh-tripipelines bundle patch (three-tier model collaboration plugin).
+# Display metadata (title/description/icon) is exported by the package itself:
+# locale/en.json + locale/zh.json under `meta`, and ./icon -> icon.svg.
 - insert:
     - id: pipeline
       name: 'dsh-tripipelines'

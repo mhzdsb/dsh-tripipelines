@@ -241,9 +241,16 @@ export function mergeConfigLayers(defaults, applyConfig, persisted, project) {
 // overrides the global config.json for THIS project only — a different devDir is a
 // different project, so projects never contaminate each other. A missing or broken
 // file is just an empty layer (best-effort; never breaks the plugin).
-export function loadProjectConfig(devDir) {
+// v132 (C7): pass workspaceRoot so the file resolves against the PROJECT, not the
+// daemon's process.cwd() (which is the profile dir in GUI launches — the old behavior
+// silently read nothing, or worse, some unrelated dev/ under cwd). Without a root the
+// legacy cwd-relative resolution stays for callers that already pass absolute devDir.
+export function loadProjectConfig(devDir, workspaceRoot) {
   try {
-    const path = resolve(join(devDir || DEFAULT_CONFIG.devDir, 'pipeline-project.json'))
+    const rel = devDir || DEFAULT_CONFIG.devDir
+    const path = workspaceRoot && !isAbsolute(rel)
+      ? resolve(join(workspaceRoot, rel, 'pipeline-project.json'))
+      : resolve(join(rel, 'pipeline-project.json'))
     if (!existsSync(path)) return {}
     const parsed = JSON.parse(readFileSync(path, 'utf8'))
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
@@ -393,7 +400,7 @@ export function renderConfig(cfg) {
   return lines.join('\n')
 }
 
-export function handleConfigCommand(cfg, rawInput) {
+export function handleConfigCommand(cfg, rawInput, opts = {}) {
   const parts = String(rawInput || '').trim().split(/\s+/).filter(Boolean)
   try {
     if (parts.length === 0) return { kind: 'success', text: renderConfig(cfg) }
@@ -403,7 +410,11 @@ export function handleConfigCommand(cfg, rawInput) {
     }
     if (a === 'reset') {
       // Check the project layer BEFORE resetting devDir back to its default.
-      const projectKeys = Object.keys(loadProjectConfig(cfg.devDir))
+      // v132 (C7): with an absolute devDir the legacy call read <devDir>/pipeline-
+      // project.json directly; with a workspace root the project layer lives at
+      // <root>/<devDir>/pipeline-project.json — pass the root through so reset's
+      // warning reflects the ACTUAL anchored location.
+      const projectKeys = Object.keys(loadProjectConfig(cfg.devDir, opts.workspaceRoot))
       for (const key of Object.keys(CONFIG_KEYS)) cfg[key] = DEFAULT_CONFIG[key]
       savePersistedConfig({}, { replace: true })
       let text = `已恢复默认配置：\n${renderConfig(cfg)}`

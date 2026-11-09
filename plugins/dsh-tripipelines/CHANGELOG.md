@@ -2,6 +2,29 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v132 — 1.35.0（全面审计修复：归档幽灵、里程碑校验、项目层锚定、市场规范、双语看板）
+
+### 变更
+- **A1 归档幽灵 L2（生命周期）**：`pipeline_lock_requirements` 开新 run 时把在役 L2 标成 `archived`，但旧代码既没有 drain 它们、回收器又只认 `replaced`——幽灵会话继续烧宿主资源且被计入 `maxLevel2Agents` 名额。现在 gates.js 新增 `retiredAtMs(a)`（replaced→`replacedAt` 毫秒 / archived→`archivedAt` ISO），`cleanupExpiredL2s` 按 TTL（默认 300000ms）同时回收两种退役态并标记 done；lock 归档后 best-effort `drainChildren(archivedIds)`；accountL2Tokens/liveL2 过滤跳过 archived；client.js 把 archived 视同 retired 显示「已结束」。
+- **A2 里程碑 taskIds 校验**：`pipeline_plan` 在写板之前校验每个 milestone 的 taskIds 都存在于本次计划；引用未知 id 直接拒绝并列出（cap 6），杜绝"里程碑永远停在 pending"的静默死锁。被拒的计划不会污染已有板面。
+- **零参断言崩溃修复**：gates.js `extractAssertions` 对 `ok()==True` 这类无参断言会 TypeError（正则可选组 undefined.trim()）——改为 `(m[2] ?? '').trim()`。
+- **C7 项目层配置锚定到工作区根**：`loadProjectConfig(devDir, workspaceRoot)` 新签名，相对 devDir 解析为 `<root>/<devDir>/pipeline-project.json`；合并从 apply()（daemon cwd 是 profile 目录，GUI 启动下永远读错/读空）迁移到 `registry.ensure()` 按根惰性合并，entry 携带 per-root `cfg`；guard、预算检查、工具工厂全部改用该视图。绝对 devDir 保留 legacy cwd 语义（verify-v82 兼容）。
+- **C8 `/pipe-off` 变成项目级退出**：写入当前工作区 `<devDir>/pipeline-project.json mode:"off"`（定位不到工作区才回退全局配置并明说）；其他工作区不受影响。工具面对外规则：全局 off 仍裁剪注册面（O8），项目 off 不裁剪——wrapper 内按 `entry.cfg.mode` 拒绝执行类工具并给出恢复指引；`registry.anyWorkspaceProjectOff()` 防止混合画像下重启即失联。`/pipe-config` 层感知：项目层非空时改动重定向写入 project.json（含 autoPairAfterConfig 联动值同步）；`handleConfigCommand` 新增 `{ workspaceRoot }` 选项让 reset 警告读锚定路径。
+- **C9 python 缺失诊断**：断言门 Python 分支捕获 ENOENT/python 相关错误 → reason 'python-not-found'，验收失败信息点名"未找到 python（PATH 里没有）：装 Python，或把验收写成 JS 断言 / cmd: 命令"，不再是一句费解的 runner-failed。
+- **B4/B5 市场规范与双语**：新增 `icon.svg`（三级圆点+M 字标）、`locale/en.json` + `locale/zh.json`（meta.title/description），package exports/files 补 `./icon`、`./locale/*.json`；cordis.patch.yml 加注释说明展示元数据位置。client.js 全量 i18n：`L_ZH`/`L_EN` 各 27 键字典 + `ctx.locale.register(I18N_NS,{zh,en})`（ctx.effect 持有）+ slot 注册带 `locale:'pipeline-board'` 吃框架注入的 `props.t`，`mkT` 兜底中文字典（face 缺失也不白屏）；slot label 用 `() => t('title')` 动态本地化。装饰性状态色（#ff8a3d/#60a5fa/rgba 填充）按 ui-plugin 规范保留为 artwork 自有色。
+- **B6 安全声明上架必读**：README.md 新增「## 安全声明（上架必读）」五条（断言门≠OS 沙箱 / cmd: 任意命令执行 / allowCodeExecution 总开关 / 信任姿态与 loopback 看板 / 数据落盘+脱敏门），README.en.md 镜像 "Security statement (read before enabling)"。
+- **杂项**：board-route BUILD_TAG 不再手写 `v131`——createRequire 读 package.json 派生 `pkg-<version>`；README/README.en 配置表陈旧三值修正（level2ContextBudget 250000 / level1ContextBudget 500000 / level3InputBudget 1200，注明 v129/v130 自动重算）；checkpoint §8 只列 in_progress L2（历史归档一行汇总）。
+
+### 测试
+- 新增 `test/smoke/v132_audit_fixes_smoke.mjs`（dev/smoke 镜像）40 断言：retiredAtMs 单元、假 store 回收器（archived+replaced 排空、在役不动）、loadProjectConfig 锚定三态、stub-plugin 全流程（ghost spawn→re-lock drain→板面 archived/done）、milestone 校验先于写板、/pipe-off 项目隔离（A off B 正常、全局文件不动、mode auto 写回项目层）、重载后项目 off 拒绝执行工具、python 诊断+零参解析、icon/locale/exports/files、zh-en 字典 parity（CRLF 归一正则）、slot locale ns 注册。双根可跑（test/ 与 dev/ 拷贝均绿）。
+- verify-v82 §6 重写为 v132 契约（裸 apply 显示全局视图；per-root 合并移交 v132 smoke）82 绿；v92 board smoke 两条静态断言更新（board id ×2 = slot+locale ns；`winUnknown ? t('unknown_window')`）ALL PASS。全套 20 套件 npm test exit 0；skill_sync_check 绿（SKILL_BODY 未动）。
+- dev/preflight.mjs 扩展：icon.svg 存在+SVG 根+≤256KiB、locale json 可解析且含 meta.title/description（缺=blocker）、exports 缺 ./icon|./locale 警告、tarball 必含清单追加 icon.svg + 两份 locale。
+
+### 文档
+- README zh/en：安全声明节、配置表修正、（既有目录结构节无需改动）。PUBLISH.md 无需改动（示例版本号是教学样例）。
+
+版本 1.34.1 → 1.35.0（行为变化：项目层配置按工作区根生效；/pipe-off 默认只关本项目；归档 L2 会被真正排空回收；里程碑引用未知任务 id 在规划期即被拒绝；看板 UI 跟随宿主语言切换）。
+
 ## v131 — 1.34.1（甜点区自愈：任何 setup 调用都会纠正陈旧数值）
 
 ### 变更

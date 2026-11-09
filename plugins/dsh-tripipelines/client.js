@@ -23,7 +23,80 @@ window.__ModuleLoader__.load({
       // Finished levels get a calm blue bar regardless of how full it was.
       done: '#60a5fa',
     }
-    const STATUS_LABEL = { active: '运行中', paused: '已暂停', done: '已完成', idle: '待命' }
+    // v132 (B5) — i18n dictionaries. Chinese is the canonical language; every UI string
+    // lives here so the slot framework can inject a localized `t` (registered below via
+    // ctx.locale.register + entry option `locale`). When no locale face is installed the
+    // component falls back to zh, so the card never blanks out. Dynamic strings are
+    // functions taking their arguments.
+    const I18N_NS = 'pipeline-board'
+    const L_ZH = {
+      title: '流水线',
+      status_active: '运行中', status_paused: '已暂停', status_done: '已完成', status_idle: '待命',
+      switch_ws_aria: '切换工作区', switch_ws_title: '切换看板显示的工作区',
+      follow_ws: '跟随当前工作区', auto_ws_hint: '自动（最近工作区）', current_suffix: ' · 当前',
+      rail_idle: '流水线待命',
+      idle_row: '◫ 流水线待命',
+      idle_tip: '流水线待命：用 pipeline_lock_requirements 开始一个开发任务后，这里会显示状态、里程碑与预算',
+      run_line: (id, statusLabel, pause) => `run: ${id} · ${statusLabel}${pause}`,
+      paused_suffix: (why) => `（${why}）`,
+      ws_line: (ws) => `工作区: ${ws}`,
+      spot_line: (l1u, l1b, m1, l2u, l2b, m2) => `甜点区: L1 ${l1u}/${l1b}（${m1}） · L2 ${l2u}/${l2b}（${m2}）`,
+      measured_word: '实测', estimated_word: '估算',
+      badge_measured: '测', badge_estimated: '估',
+      badge_measured_title: '宿主 tokenMeter 实测（请求压力口径）',
+      badge_estimated_title: '估算读数（尾部窗口或缓存），不是精确占用',
+      meter_tip: (label, used, cap, lim, win) => `${label}｜当前 ${used}／甜点 ${cap}／危险线 ${lim}／窗口 ${win}。装了压缩代理时这是原始请求压力，实际上下文可能小得多、表现照常——灰色=过甜点仅提示，琥珀=逼近危险线，红色=过线才建议 checkpoint（数值见各条）`,
+      meter_tip_unknown: (label, used) => `${label}｜当前 ${used}：该模型没有内置档案、宿主也未上报窗口，不画假刻度。换模型时命令会自动对齐；也可手动 /pipe-config level1ContextWindow <值>`,
+      finish_done: '已完成', finish_end: '已结束',
+      unknown_window: '未知', no_data: '—',
+      seg_done: '已完成', seg_failed: '失败', seg_pending: '待做',
+      subtasks_caption: '子任务', more_n: (n) => `另有 ${n} 个`,
+      l2_overflow: (n) => `L2 另有 ${n} 个（悬浮查看全部）`,
+      pending_accept: '⚠️ 待验收',
+      milestone_count: (accepted, total) => `里程碑 ${accepted}/${total}`,
+      no_milestones: '无里程碑',
+      l1_row: (model) => `L1 ${model}`,
+      l2_row: (label, model) => `L2 ${label} · ${model}`,
+    }
+    const L_EN = {
+      title: 'Pipeline',
+      status_active: 'Running', status_paused: 'Paused', status_done: 'Done', status_idle: 'Idle',
+      switch_ws_aria: 'Switch workspace', switch_ws_title: 'Choose which workspace the board shows',
+      follow_ws: 'Follow current workspace', auto_ws_hint: 'Auto (recent workspace)', current_suffix: ' · current',
+      rail_idle: 'Pipeline standby',
+      idle_row: '◫ Pipeline standby',
+      idle_tip: 'Standby: start a development task with pipeline_lock_requirements and this card shows status, milestones and budget.',
+      run_line: (id, statusLabel, pause) => `run: ${id} · ${statusLabel}${pause}`,
+      paused_suffix: (why) => ` (${why})`,
+      ws_line: (ws) => `Workspace: ${ws}`,
+      spot_line: (l1u, l1b, m1, l2u, l2b, m2) => `Sweet spot: L1 ${l1u}/${l1b} (${m1}) · L2 ${l2u}/${l2b} (${m2})`,
+      measured_word: 'measured', estimated_word: 'est.',
+      badge_measured: 'M', badge_estimated: 'E',
+      badge_measured_title: 'Measured by host tokenMeter (request-pressure basis)',
+      badge_estimated_title: 'Estimated reading (tail window or cache), not exact usage',
+      meter_tip: (label, used, cap, lim, win) => `${label} | current ${used} / sweet ${cap} / danger ${lim} / window ${win}. With a compression proxy this is raw request pressure — real context may be far smaller and behavior normal. Grey = past the sweet spot (hint only), amber = approaching the danger line, red = past it: consider a checkpoint.`,
+      meter_tip_unknown: (label, used) => `${label} | current ${used}: no built-in profile for this model and the host reports no window, so no fake scale. Switching models re-aligns automatically; you can also set /pipe-config level1ContextWindow <value>.`,
+      finish_done: 'Done', finish_end: 'Ended',
+      unknown_window: 'unknown', no_data: '—',
+      seg_done: 'done', seg_failed: 'failed', seg_pending: 'pending',
+      subtasks_caption: 'subtasks', more_n: (n) => `+${n} more`,
+      l2_overflow: (n) => `L2 +${n} more (hover for all)`,
+      pending_accept: '⚠️ Awaiting acceptance',
+      milestone_count: (accepted, total) => `Milestones ${accepted}/${total}`,
+      no_milestones: 'No milestones',
+      l1_row: (model) => `L1 ${model}`,
+      l2_row: (label, model) => `L2 ${label} · ${model}`,
+    }
+    // Translate helper: props.t from the slot framework when present, zh dictionary
+    // otherwise. Function values are called with their args; missing keys echo the key.
+    const mkT = (t) => (key, ...args) => {
+      let v
+      if (typeof t === 'function') {
+        try { v = t(key) } catch { v = undefined }
+      }
+      if (v == null || v === key) v = L_ZH[key]
+      return typeof v === 'function' ? v(...args) : (v == null ? key : String(v))
+    }
     // Sidebar card (v94): sized by its parent slot (100% width, box-sizing border-box) so it
     // matches the sidebar column exactly instead of a fixed width; 13px text follows the
     // cost-meter card's rhythm, colours come only from the theme's alias tokens.
@@ -154,14 +227,14 @@ window.__ModuleLoader__.load({
     // host loads that project's store from disk on demand. v110 — the first entry
     // ("follow") returns to the live DSH workspace; a pick stays session-only so a
     // workspace switch in the app always wins by default.
-    function workspacePicker(snap, picked, cwd, onPick) {
+    function workspacePicker(t, snap, picked, cwd, onPick) {
       const list = Array.isArray(snap && snap.workspaces) ? snap.workspaces : []
       if (list.length < 2) return null
       return h(
         'select',
         {
-          'aria-label': '切换工作区',
-          title: '切换看板显示的工作区',
+          'aria-label': t('switch_ws_aria'),
+          title: t('switch_ws_title'),
           value: picked || '',
           onChange: (e) => onPick(e.target.value || null),
           style: {
@@ -178,8 +251,8 @@ window.__ModuleLoader__.load({
             flex: 'none',
           },
         },
-        h('option', { key: '__follow__', value: '' }, cwd ? '跟随当前工作区' : '自动（最近工作区）'),
-        list.map((w) => h('option', { key: w.key, value: w.key }, `${w.name}${w.active ? ' · 当前' : ''}`)),
+        h('option', { key: '__follow__', value: '' }, cwd ? t('follow_ws') : t('auto_ws_hint')),
+        list.map((w) => h('option', { key: w.key, value: w.key }, `${w.name}${w.active ? t('current_suffix') : ''}`)),
       )
     }
 
@@ -187,6 +260,7 @@ window.__ModuleLoader__.load({
     // mounted), then a two-line card — state + milestone progress on top, budget and live
     // L2s below. Hovering shows the full detail (run id, milestones, L2s, recent events).
     function PipelineBoard(props) {
+      const t = mkT(props && typeof props.t === 'function' ? props.t : null)
       const wide = !props || props.wide !== false
       const picked = usePickedWorkspace()
       // v110 — the shell hands every slot component the standard useSessions hook; the
@@ -213,13 +287,14 @@ window.__ModuleLoader__.load({
       if (!wide) {
         // Collapsed sidebar (56px rail): no card fits, so degrade to one icon-sized
         // marker whose tooltip carries the state.
+        const statusLabel = t(`status_${run.status}`) !== `status_${run.status}` ? t(`status_${run.status}`) : run.status
         return h(
           'div',
           {
             'data-pipeline-board': '1',
             title: idle
-              ? `流水线待命${wsName ? ` · ${wsName}` : ''}`
-              : `流水线 ${STATUS_LABEL[run.status] || run.status}${wsName ? ` · ${wsName}` : ''}`,
+              ? `${t('rail_idle')}${wsName ? ` · ${wsName}` : ''}`
+              : `${t('title')} ${statusLabel}${wsName ? ` · ${wsName}` : ''}`,
             style: {
               display: 'flex',
               alignItems: 'center',
@@ -238,11 +313,11 @@ window.__ModuleLoader__.load({
           'div',
           {
             'data-pipeline-board': '1',
-            title: '流水线待命：用 pipeline_lock_requirements 开始一个开发任务后，这里会显示状态、里程碑与预算',
+            title: t('idle_tip'),
             style: { ...CARD, opacity: 0.6 },
           },
-          h('div', { style: { ...ROW, color: C.sub } }, '◫ 流水线待命'),
-          workspacePicker(snap, picked, cwd, pickWorkspace),
+          h('div', { style: { ...ROW, color: C.sub } }, t('idle_row')),
+          workspacePicker(t, snap, picked, cwd, pickWorkspace),
         )
       }
       const milestones = snap.milestones || []
@@ -254,9 +329,17 @@ window.__ModuleLoader__.load({
       const paused = run.paused === true
       const accent = paused || run.status === 'active' ? C.warn : run.status === 'done' ? C.ok : C.idle
       const detail = [
-        `run: ${run.id || '(none)'} · ${STATUS_LABEL[run.status] || run.status}${paused ? `（${run.pauseReason || '已暂停'}）` : ''}`,
-        `工作区: ${wsName || picked || cwd || '(host default)'}`,
-        `甜点区: L1 ${fmtCount(snap.context?.level1?.tokens)}/${fmtCount(snap.context?.level1?.budget)}（${snap.context?.level1?.source === 'tokenMeter.measure' ? '实测' : '估算'}） · L2 ${fmtCount(snap.context?.level2?.tokens)}/${fmtCount(snap.context?.level2?.budget)}（${snap.context?.level2?.measured ? '实测' : '估算'}）`,
+        t('run_line', run.id || '(none)', `status_${run.status}` in L_ZH ? t(`status_${run.status}`) : run.status, paused ? t('paused_suffix', run.pauseReason || t('status_paused')) : ''),
+        t('ws_line', wsName || picked || cwd || '(host default)'),
+        t(
+          'spot_line',
+          fmtCount(snap.context?.level1?.tokens),
+          fmtCount(snap.context?.level1?.budget),
+          snap.context?.level1?.source === 'tokenMeter.measure' ? t('measured_word') : t('estimated_word'),
+          fmtCount(snap.context?.level2?.tokens),
+          fmtCount(snap.context?.level2?.budget),
+          snap.context?.level2?.measured ? t('measured_word') : t('estimated_word'),
+        ),
         ...milestones.map((m) => `· ${m.name}: ${m.state} (${m.done}/${m.total})`),
         ...agents.map((a) => `· L2 ${a.label}: ${a.state}${a.scopeDir ? ` @ ${a.scopeDir}` : ''}`),
         ...events.map((e) => `· ${e.type}: ${e.text}`),
@@ -337,9 +420,9 @@ window.__ModuleLoader__.load({
                 : 'rgba(52,211,153,.88)'
         const valueColor = finished ? C.done : inDanger ? C.error : nearDanger ? C.warn : inWarn ? C.sub : C.text
         const titleText = lim > 0
-          ? `${label}｜当前 ${fmtCount(used)}／甜点 ${fmtCount(cap)}／危险线 ${fmtCount(lim)}／窗口 ${fmtCount(win)}。装了压缩代理时这是原始请求压力，实际上下文可能小得多、表现照常——灰色=过甜点仅提示，琥珀=逼近危险线，红色=过线才建议 checkpoint（数值见各条）`
+          ? t('meter_tip', label, fmtCount(used), fmtCount(cap), fmtCount(lim), win > 0 ? fmtCount(win) : t('unknown_window'))
           : winUnknown
-            ? `${label}｜当前 ${fmtCount(used)}：该模型没有内置档案、宿主也未上报窗口，不画假刻度。换模型时命令会自动对齐；也可手动 /pipe-config level1ContextWindow <值>`
+            ? t('meter_tip_unknown', label, fmtCount(used))
             : label
         return h(
           'div',
@@ -366,7 +449,7 @@ window.__ModuleLoader__.load({
                 )
               : null,
             finished
-              ? h('span', { style: { color: C.done, fontWeight: 600, flex: 'none' } }, finishLabel || '已完成')
+              ? h('span', { style: { color: C.done, fontWeight: 600, flex: 'none' } }, finishLabel || t('finish_done'))
               : h(
                   'span',
                   { style: { color: cap > 0 ? valueColor : C.sub, fontWeight: 600, flex: 'none', fontVariantNumeric: 'tabular-nums' } },
@@ -379,23 +462,23 @@ window.__ModuleLoader__.load({
                   {
                     style: { color: inDanger ? C.error : C.sub, flex: 'none', width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
                   },
-                  cap > 0 && !winUnknown ? `${pct}%` : winUnknown ? '未知' : '—',
+                  cap > 0 && !winUnknown ? `${pct}%` : winUnknown ? t('unknown_window') : t('no_data'),
                 ),
-            // Provenance badge sits right of the percent so 测/估 never wraps.
+            // Provenance badge sits right of the percent so M/E never wrap.
             !finished && badge
               ? h(
                   'span',
                   {
                     style: {
-                      color: badge === '测' ? C.ok : C.warn,
+                      color: badge === t('badge_measured') ? C.ok : C.warn,
                       flex: 'none',
                       fontSize: 9.5,
                       lineHeight: '14px',
                       padding: '0 3px',
                       borderRadius: 3,
-                      background: badge === '测' ? 'rgba(52,211,153,.12)' : 'rgba(251,191,36,.14)',
+                      background: badge === t('badge_measured') ? 'rgba(52,211,153,.12)' : 'rgba(251,191,36,.14)',
                     },
-                    title: badge === '测' ? '宿主 tokenMeter 实测（请求压力口径）' : '估算读数（尾部窗口或缓存），不是精确占用',
+                    title: badge === t('badge_measured') ? t('badge_measured_title') : t('badge_estimated_title'),
                   },
                   badge,
                 )
@@ -450,7 +533,7 @@ window.__ModuleLoader__.load({
           cells.push(
             h('div', {
               key: `c${i}`,
-              title: i < doneN ? '已完成' : i < doneN + failedN ? '失败' : '待做',
+              title: i < doneN ? t('seg_done') : i < doneN + failedN ? t('seg_failed') : t('seg_pending'),
               style: { flex: '0 0 auto', width: 7, height: 3, borderRadius: 1.5, background: bg },
             }),
           )
@@ -465,7 +548,7 @@ window.__ModuleLoader__.load({
             h(
               'span',
               { style: { color: C.sub, flex: 'none', fontSize: 9.5, lineHeight: '14px', opacity: 0.78, letterSpacing: 0.2 } },
-              '子任务',
+              t('subtasks_caption'),
             ),
             allDone
               ? null
@@ -477,7 +560,7 @@ window.__ModuleLoader__.load({
           ),
           totalN > 0 ? h('div', { style: { display: 'flex', gap: 3, alignItems: 'center', flexWrap: 'wrap' } }, cells) : null,
           totalN > shown
-            ? h('div', { style: { color: C.sub, fontSize: 9.5, lineHeight: '12px' } }, `另有 ${totalN - shown} 个`)
+            ? h('div', { style: { color: C.sub, fontSize: 9.5, lineHeight: '12px' } }, t('more_n', totalN - shown))
             : null,
         )
       }
@@ -512,7 +595,7 @@ window.__ModuleLoader__.load({
                 strokeLinejoin: 'round',
               }),
             ),
-            h('span', { style: { color: C.text, fontWeight: 700, fontSize: 13 } }, '流水线'),
+            h('span', { style: { color: C.text, fontWeight: 700, fontSize: 13 } }, t('title')),
             h(
               'span',
               {
@@ -528,7 +611,7 @@ window.__ModuleLoader__.load({
                   marginLeft: 'auto',
                 },
               },
-              paused ? '已暂停' : STATUS_LABEL[run.status] || run.status,
+              paused ? t('status_paused') : `status_${run.status}` in L_ZH ? t(`status_${run.status}`) : run.status,
             ),
           ),
           // Sub row: smaller than everything below it, so hierarchy reads top-down.
@@ -539,16 +622,16 @@ window.__ModuleLoader__.load({
               ? h(
                   'span',
                   { style: { color: '#ff8a3d', fontWeight: 700, fontSize: 11.5, whiteSpace: 'nowrap', flex: 'none' } },
-                  `里程碑 ${accepted}/${milestones.length}`,
+                  t('milestone_count', accepted, milestones.length),
                 )
-              : h('span', { style: { color: C.sub, whiteSpace: 'nowrap' } }, '无里程碑'),
+              : h('span', { style: { color: C.sub, whiteSpace: 'nowrap' } }, t('no_milestones')),
             h(
               'span',
               { style: { marginLeft: 'auto', color: C.sub, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', flex: 'none' } },
               `${fmtCount(budget.tokensUsed || 0)}/${fmtCount(budget.maxTokens || 0)}`,
             ),
           ),
-          workspacePicker(snap, picked, cwd, pickWorkspace),
+          workspacePicker(t, snap, picked, cwd, pickWorkspace),
         ),
         // Divider: the title block ends here; everything below is the level board.
         h('div', { style: { height: 1, background: 'rgba(255,255,255,.08)', margin: '7px 0 1px' } }),
@@ -556,24 +639,24 @@ window.__ModuleLoader__.load({
         // and its model. Bar thickness encodes the layer (L1 thickest, L3 thinnest);
         // levels are separated by a modest gap so the card stays dense but grouped.
         meter(
-          `L1 ${shortModel(models.level1)}`,
+          t('l1_row', shortModel(models.level1)),
           l1spot.tokens,
           l1spot.budget,
           spotColor(l1spot.tokens, l1spot.budget, l1spot.danger),
           'l1',
           run.status === 'done',
-          '已完成',
+          t('finish_done'),
           0,
           5,
           null,
           l1spot.danger,
           l1spot.window,
           // v126 — badge from the provenance the server now ships. No reading yet
-          // (source=null && tokens=0) shows nothing rather than a fake 估.
+          // (source=null && tokens=0) shows nothing rather than a fake estimate.
           l1spot.source === 'tokenMeter.measure'
-            ? '测'
+            ? t('badge_measured')
             : l1spot.approximate || l1spot.tokens > 0
-              ? '估'
+              ? t('badge_estimated')
               : null,
         ),
         // Every lead gets a row — a finished one keeps its (blue, full) bar and says
@@ -582,12 +665,13 @@ window.__ModuleLoader__.load({
           ? agents
               .slice()
               .sort((a, b) => {
-                const rank = (x) => (x.state === 'done' || x.state === 'replaced' ? 2 : x.state === 'failed' ? 1 : 0)
+                // v132 (audit D1) — archived leads are retired like replaced ones.
+                const rank = (x) => (x.state === 'done' || x.state === 'replaced' || x.state === 'archived' ? 2 : x.state === 'failed' ? 1 : 0)
                 return rank(a) - rank(b)
               })
               .slice(0, 4)
               .map((a, i) => {
-                const finished = a.state === 'done' || a.state === 'replaced'
+                const finished = a.state === 'done' || a.state === 'replaced' || a.state === 'archived'
                 const failed = a.state === 'failed'
                 // v94d: `tokens` is measured from the lead's own session by the host
                 // (tokenMeter — local, no model call) and cached when it finishes.
@@ -599,20 +683,20 @@ window.__ModuleLoader__.load({
                 const measured = typeof a.tokens === 'number' && a.tokens > 0
                 const usedTokens = measured ? a.tokens : Number(a.estimatedTokens) || 0
                 return meter(
-                  `L2 ${a.label} · ${shortModel(a.model || models.level2)}`,
+                  t('l2_row', a.label, shortModel(a.model || models.level2)),
                   usedTokens,
                   l2spot.budget,
                   failed ? C.error : live ? spotColor(usedTokens, l2spot.budget, l2spot.danger) : C.sub,
                   a.id,
                   finished,
-                  a.state === 'replaced' ? '已结束' : '已完成',
+                  a.state === 'replaced' || a.state === 'archived' ? t('finish_end') : t('finish_done'),
                   i === 0 ? 9 : 4,
                   3,
                   null,
                   l2spot.danger,
                   l2spot.window,
-                  // v126 — the old ' · 估' label suffix becomes the same badge as L1's.
-                  live ? '测' : '估',
+                  // v126 — the old estimate suffix becomes the same badge as L1's.
+                  live ? t('badge_measured') : t('badge_estimated'),
                 )
               })
           : [meter('L2', 0, l2spot.budget, C.idle, 'l2-none', false, null, 9, 3, null, l2spot.danger, l2spot.window, null)]),
@@ -620,7 +704,7 @@ window.__ModuleLoader__.load({
           ? h(
               'div',
               { style: { ...ROW, color: C.sub, fontSize: 11, lineHeight: '16px', marginTop: 4 } },
-              `L2 另有 ${agents.length - 4} 个（悬浮查看全部）`,
+              t('l2_overflow', agents.length - 4),
             )
           : null,
         segments('L3', subs.done, subs.total, subs.failed, 'l3'),
@@ -628,7 +712,7 @@ window.__ModuleLoader__.load({
           ? h(
               'div',
               { style: { ...ROW, gap: 4, color: C.warn, fontSize: 11, lineHeight: '15px', marginTop: 10 } },
-              '⚠️ 待验收',
+              t('pending_accept'),
             )
           : null,
       )
@@ -637,6 +721,17 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
+        // v132 (B5): register the UI dictionary with the Client locale service when it is
+        // installed (late registration is picked up without remount; zh+en are the baseline
+        // languages). The slot entry then receives an injected props.t that re-renders on
+        // locale switches. Without the face, mkT falls back to the zh dictionary.
+        if (ctx.locale && typeof ctx.locale.register === 'function') {
+          try {
+            ctx.effect(() => ctx.locale.register(I18N_NS, { zh: L_ZH, en: L_EN }))
+          } catch {
+            /* locale face unavailable — zh fallback keeps the card fully functional */
+          }
+        }
         // Single seat (v94): the sidebar foot dock — same zone as the token/cost entries.
         // One widget, one place; nothing is drawn in the composer area or as a card.
         ctx.slots.inject('sidebar.footer.action', () =>
@@ -645,7 +740,8 @@ window.__ModuleLoader__.load({
               name: 'sidebar.footer.action',
               id: 'pipeline-board',
               order: 1,
-              label: '流水线',
+              label: () => mkT(ctx.locale?.bind?.(I18N_NS))(L_ZH.title),
+              locale: I18N_NS,
             },
             PipelineBoard,
           ),

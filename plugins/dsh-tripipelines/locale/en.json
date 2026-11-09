@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Three-tier pipeline",
+    "description": "L1 coordinator → L2 module leads → L3 local executors: model-collaboration pipeline with strict adjacency, per-task acceptance gates, budget guard and a live sidebar status board."
+  }
+}

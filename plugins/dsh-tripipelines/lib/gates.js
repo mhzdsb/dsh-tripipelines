@@ -10,16 +10,36 @@ import { isPlainObj, RESULT_STATUS_OK, normalizeStatus, semanticScore, SEMANTIC_
 // Quality gates (DoD + JSON + semantic) — deterministic, mechanically checkable
 // ---------------------------------------------------------------------------
 
-// Drain replaced old L2s whose handoff TTL has expired. This is a lazy safety net: the primary
-// path is pipeline_drain_leads (explicit), but if L1 forgets or the verification stalls, the next
-// spawn reaps expired old L2s so they do not linger forever (no background timer, no token cost).
+// v132 (audit D1) — one timestamp helper for both retire paths: `replacedAt` is
+// written as Date.now() by spawn(replacingChildId), `archivedAt` as an ISO string
+// by lock_requirements. Returns ms-epoch when parseable, else null.
+export function retiredAtMs(a) {
+  if (a?.state === 'replaced') {
+    const t = Number(a.replacedAt)
+    return Number.isFinite(t) && t > 0 ? t : null
+  }
+  if (a?.state === 'archived') {
+    const t = Date.parse(a.archivedAt ?? '')
+    return Number.isFinite(t) ? t : null
+  }
+  return null
+}
+
+// Drain replaced/archived old L2s whose handoff TTL has expired. This is a lazy safety net: the primary
+// path is pipeline_drain_leads (explicit) plus the immediate drain in lock_requirements, but if L1
+// forgets or the verification stalls, the next spawn reaps expired old L2s so they do not linger
+// forever (no background timer, no token cost). v132: `archived` (superseded by a new run) joins the
+// reap set — before that it was invisible here AND counted as live by spawn, so repeated locks could
+// exhaust maxLevel2Agents with ghosts whose host sessions kept running.
 export function cleanupExpiredL2s(subs, agent, r, cfg) {
   if (!subs || typeof subs.drainChildren !== 'function') return
   const ttl = Number(cfg.level2HandoffTtlMs) > 0 ? Number(cfg.level2HandoffTtlMs) : 300000
   const now = Date.now()
   const expired = []
   for (const [id, a] of r.store.agents) {
-    if (a.kind === 'l2' && a.state === 'replaced' && a.replacedAt && now - a.replacedAt > ttl) expired.push(id)
+    if (a.kind !== 'l2') continue
+    const at = retiredAtMs(a)
+    if (at !== null && now - at > ttl) expired.push(id)
   }
   if (expired.length === 0) return
   try { subs.drainChildren(agent, expired) } catch { /* best-effort */ }
@@ -40,7 +60,10 @@ export function extractAssertions(acceptance) {
   let m
   ASSERTION_RE.lastIndex = 0
   while ((m = ASSERTION_RE.exec(source)) !== null) {
-    out.push({ name: m[1], args: m[2].trim(), expected: m[4], op: m[3] })
+    // v132 — `??` guards the optional empty-args group: a zero-arg call like
+    // `ok()==True` matched with m[2] === undefined and crashed the gate with
+    // "Cannot read properties of undefined (reading 'trim')" before it could run.
+    out.push({ name: m[1], args: (m[2] ?? '').trim(), expected: m[4], op: m[3] })
   }
   return out
 }
@@ -250,9 +273,18 @@ export function executeAcceptance(code, acceptance, baseDir, cfg) {
       writeFileSync(join(dir, 'test.py'), harness, 'utf8')
       execFileSync('python', [join(dir, 'test.py')], { cwd: dir, stdio: 'ignore', timeout: 30000 })
     }
-  } catch {
+  } catch (error) {
     cleanup()
-    return { ran: false, reason: 'runner-failed', language, assertions, passed: 0, total: assertions.length }
+    // v132 (C9): a missing `python` binary used to surface as an anonymous
+    // 'runner-failed' — fail-closed but undiagnosable. Name the cause when the
+    // spawn itself says ENOENT so the user learns to install Python or switch
+    // the acceptance to JS assertions / cmd:.
+    const enoent = String(error?.code ?? '') === 'ENOENT' || /python/i.test(String(error?.message ?? ''))
+    return {
+      ran: false,
+      reason: language === 'python' && enoent ? 'python-not-found' : 'runner-failed',
+      language, assertions, passed: 0, total: assertions.length,
+    }
   }
 
   let results
@@ -361,7 +393,11 @@ function evaluateAcceptance(code, acceptance, cfg, baseDir, workspaceRoot, opts 
       checks.push({ name: `execution-assertions ${exec.passed}/${exec.total}`, pass: qOk, score: Number(score.toFixed(3)) })
       if (!qOk) ok = false
     } else {
-      checks.push({ name: `execution-assertions (${exec.reason ?? 'not-run'})`, pass: false })
+      // v132 (C9): python-not-found gets an actionable hint, not just a reason code.
+      const hint = exec.reason === 'python-not-found'
+        ? ' — 未找到 `python`（PATH 里没有）。装 Python，或把验收写成 JS 断言 / cmd: 命令'
+        : ''
+      checks.push({ name: `execution-assertions (${exec.reason ?? 'not-run'})${hint}`, pass: false })
       ok = false
     }
     return { ok, score: Number(score.toFixed(3)), checks }

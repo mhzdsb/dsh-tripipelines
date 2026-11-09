@@ -19,6 +19,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { createStore } from './store.js'
+import { loadProjectConfig } from './config.js'
 import { resolveSession } from './dsh-compat.js'
 
 const WINDOWS = process.platform === 'win32'
@@ -146,16 +147,21 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile =
   function ensure(key) {
     let entry = entries.get(key)
     if (entry) return entry
-    const r = createStore(cfg, { root: key })
+    // v132 (C7): the project layer <devDir>/pipeline-project.json must be read against
+    // THIS workspace's root, not the daemon cwd. cfg is shared across workspaces, so we
+    // build a per-root merged view; layers below it (runtime/persisted) stay global.
+    const projectLayer = loadProjectConfig(cfg.devDir, key)
+    const wsCfg = Object.keys(projectLayer).length ? { ...cfg, ...projectLayer } : cfg
+    const r = createStore(wsCfg, { root: key })
     // A subagent's session cwd is its scopeDir (e.g. dev/module), not the
     // project root; record the mapping at spawn time so its tool calls land in
     // the parent workspace instead of creating dev/module/.dsh.
     r.bindChild = (childId) => {
       if (childId != null) childRoot.set(String(childId), key)
     }
-    const list = buildTools(r)
+    const list = buildTools(r, wsCfg)
     const tools = new Map((Array.isArray(list) ? list : []).map((tool) => [tool.name, tool]))
-    entry = { key, root: r.store.workspaceRoot || key, r, tools }
+    entry = { key, root: r.store.workspaceRoot || key, cfg: wsCfg, r, tools }
     entries.set(key, entry)
     record(key)
     if (typeof log === 'function') log(`[pipeline] workspace store ready: ${entry.root}`)
@@ -176,6 +182,20 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile =
   function peek(source) {
     const key = keyFor(source)
     return key ? entries.get(key) ?? null : null
+  }
+
+  // v132 (C8): does any KNOWN workspace opt out of the pipeline through its project
+  // layer (<devDir>/pipeline-project.json mode:"off")? Checked once at load so the
+  // tool surface (O8 off-subset) doesn't hide /pipe-config restore paths from a
+  // mixed-profile user. Cheap: one small file read per known project, cap MAX_KNOWN.
+  function anyWorkspaceProjectOff() {
+    for (const w of listKnown()) {
+      try {
+        const proj = loadProjectConfig(cfg.devDir, w.key)
+        if (String(proj.mode) === 'off') return true
+      } catch { /* unreadable project file: treat as not-off */ }
+    }
+    return false
   }
 
   // Known workspaces, newest first, for the board switcher. Only paths that
@@ -294,6 +314,7 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile =
     tierOf,
     entryForRoute,
     listKnown,
+    anyWorkspaceProjectOff,
     lastActive: () => lastActiveKey,
     size: () => entries.size,
     keys: () => [...entries.keys()],

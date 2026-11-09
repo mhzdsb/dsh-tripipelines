@@ -70,6 +70,32 @@ if (!existsSync(pkgPath)) {
   if (!pkg.repository) warn('package.json 没有 repository 字段（npm 页面不会链到仓库）')
   if (!pkg.engines || !pkg.engines.node) warn('package.json 没有 engines.node（market 无法展示宿主要求）')
 
+  // v132 (B6): market display resources — icon + localized meta (host-plugin checklist)
+  for (const [p, label] of [['icon.svg', '图标'], ['locale/en.json', '英文文案'], ['locale/zh.json', '中文文案']]) {
+    if (!existsSync(join(pkgDir, p))) bad(`缺少${label}资源 ${p}（市场上架显示不完整）`)
+  }
+  if (existsSync(join(pkgDir, 'icon.svg'))) {
+    const svg = readFileSync(join(pkgDir, 'icon.svg'), 'utf8')
+    if (!/<svg[\s>]/i.test(svg)) bad('icon.svg 不是合法 SVG')
+    else if (Buffer.byteLength(svg) > 256 * 1024) warn('icon.svg 超过 256KiB，市场可能拒绝')
+    else ok('icon.svg 合法且 ≤256KiB')
+  }
+  for (const loc of ['en', 'zh']) {
+    const f = join(pkgDir, `locale/${loc}.json`)
+    if (existsSync(f)) {
+      try {
+        const j = JSON.parse(readFileSync(f, 'utf8'))
+        if (j.meta && j.meta.title && j.meta.description) ok(`locale/${loc}.json 含 meta.title/description`)
+        else bad(`locale/${loc}.json 缺少 meta.title 或 meta.description`)
+      } catch (e) {
+        bad(`locale/${loc}.json 解析失败：${String(e.message).split('\n')[0]}`)
+      }
+    }
+  }
+  const exports_ = pkg.exports || {}
+  if (!exports_['./icon']) warn('package.json exports 缺 ./icon（宿主读取显示资源的入口）')
+  if (!exports_['./locale/*.json']) warn('package.json exports 缺 ./locale/*.json')
+
   // tests point at real files
   const testCmd = String((pkg.scripts && pkg.scripts.test) || '')
   const testFiles = [...testCmd.matchAll(/node\s+(\S+\.mjs)/g)].map((m) => m[1])
@@ -104,7 +130,7 @@ if (!existsSync(pkgPath)) {
     try {
       const info = JSON.parse(pack.out)[0]
       const names = (info.files || []).map((f) => f.path.replace(/\\/g, '/'))
-      const need = ['lib/plugin.js', 'client.js', 'cordis.patch.yml', 'package.json', 'skills/pipeline-orchestration/SKILL.md']
+      const need = ['lib/plugin.js', 'client.js', 'cordis.patch.yml', 'package.json', 'skills/pipeline-orchestration/SKILL.md', 'icon.svg', 'locale/en.json', 'locale/zh.json']
       const miss = need.filter((n) => !names.includes(n))
       if (!miss.length) ok(`${names.length} 个文件，unpacked ${(info.unpackedSize / 1024).toFixed(0)} KB，tarball ${(info.size / 1024).toFixed(0)} KB`)
       else bad(`tarball 缺少关键文件：${miss.join(', ')}`)

@@ -7,8 +7,20 @@
 import { milestoneStates } from './store.js'
 import { measureLevel1Context } from './dsh-compat.js'
 import { numCfg } from './util.js'
+import { createRequire } from 'node:module'
 
-const BUILD_TAG = 'v131'
+// v132 (audit D6) — the tag used to be a hand-maintained `v131` constant that
+// drifted behind package.json (it read v131 while the package was 1.34.1). Derive
+// it from the shipped manifest instead; the internal deploy codename still rides
+// in the CHANGELOG, this is just "which build am I looking at" in ?debug=1.
+const PKG_VERSION = (() => {
+  try {
+    return createRequire(import.meta.url)('../package.json').version ?? 'dev'
+  } catch {
+    return 'dev'
+  }
+})()
+const BUILD_TAG = `pkg-${PKG_VERSION}`
 
 function clip(value, max) {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim()
