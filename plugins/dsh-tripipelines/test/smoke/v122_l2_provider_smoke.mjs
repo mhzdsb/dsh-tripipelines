@@ -150,11 +150,10 @@ try {
   const repaired = await configCmd('level2Model qwen3.7-plus')
   check('command reports the auto-pairing', String(repaired.text ?? '').includes('已自动配套 level2Provider=qwen-token-plan-cn'), String(repaired.text))
   // v128 — the sweet spot follows the model's REAL window (qwen3.7-plus = 1M here),
-  // not deepseek-flash's stale 32K/96K/128K defaults.
-  check('sweet spot retuned to host window', String(repaired.text ?? '').includes('level2ContextBudget: 32000 → 250000'), String(repaired.text))
-  check('danger line retuned too', String(repaired.text ?? '').includes('level2DangerBudget: 96000 → 750000'), String(repaired.text))
-  check('window corrected to 1M', String(repaired.text ?? '').includes('level2ContextWindow: 128000 → 1000000'), String(repaired.text))
-  check('retune persisted globally', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
+  // not whatever stale numbers were left behind.
+  check('sweet spot aligned to host window', String(repaired.text ?? '').includes('甜点区已对齐宿主窗口（1000000）'), String(repaired.text))
+  // v129: the defaults already match qwen's 1M window, so nothing needed persisting.
+  check('no stale tuning persisted for an aligned model', readGlobal().level2ContextBudget === undefined || readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
   const afterRepair = await call('pipeline_model_setup')
   check('message no longer flags an invalid pairing', !afterRepair.message.includes('🚨 当前 L2 配对无效'), afterRepair.message.slice(0, 400))
   check('current line shows the corrected provider', afterRepair.message.includes('qwen-token-plan-cn/qwen3.7-plus'), afterRepair.message.slice(0, 400))
@@ -203,12 +202,14 @@ try {
   check('detail names the provider that serves it', String(pairing?.detail ?? '').includes('qwen-token-plan-cn'), String(pairing?.detail))
 
   section('sweet spot follows the host window for profile-less models (v128)')
-  // Drag the tuning back to flash's stale defaults behind autoPair's back, then
-  // re-pairing must restore the 1M-window numbers — including in the global file.
+  // v129: flash's own profile is 1M×0.25 = 250K now — switching to it must restore
+  // ITS numbers (not qwen's), and switching back to an unprofiled model must retune
+  // from the host again, including in the global file.
+  await configCmd('level2ContextBudget 32000') // stale value dragged in behind autoPair's back
   await configCmd('level2Model deepseek-flash')
-  check('profile model restores its own numbers', readGlobal().level2ContextBudget === 32000, JSON.stringify(readGlobal()))
+  check('profile model restores its own numbers', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
   const retuned = await configCmd('level2Model qwen3.7-plus')
-  check('budget restored to 1M×0.25', String(retuned.text ?? '').includes('level2ContextBudget: 32000 → 250000'), String(retuned.text))
+  check('budget restored to 1M×0.25', String(retuned.text ?? '').includes('甜点区已对齐宿主窗口（1000000）'), String(retuned.text))
   check('retune persisted globally again', readGlobal().level2ContextBudget === 250000, JSON.stringify(readGlobal()))
 } finally {
   rmSync(tmp, { recursive: true, force: true })

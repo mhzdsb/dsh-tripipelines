@@ -12,11 +12,19 @@ import { isPlainObj } from './util.js'
 // a lookup for sweet-spot tuning — it never switches the actual L1 model (the
 // harness decides that); `level1Model` exists purely to query this table.
 export const MODEL_PROFILES = {
-  'deepseek-pro': { tier: 'l1', contextWindow: 128000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
-  'deepseek-chat': { tier: 'l1', contextWindow: 128000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
-  'deepseek-reasoner': { tier: 'l1', contextWindow: 128000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
-  'deepseek-v4-pro': { tier: 'l1', contextWindow: 128000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
-  'deepseek-flash': { tier: 'l2', contextWindow: 128000, sweetSpotRatio: 0.25, dangerRatio: 0.75 },
+  // v129 — DeepSeek V4 family ships a 1M-token window (model card: "million-token
+  // context intelligence"; Think Max recommends >=384K). Pre-v129 these were stuck
+  // at the old 128K assumption, so the sweet spot said 32K for deepseek-flash —
+  // far below what users observed in practice.
+  // CAUTION: 'deepseek-pro' / 'deepseek-chat' / 'deepseek-reasoner' are legacy
+  // aliases kept only so an old config still finds a profile; the harness's real
+  // ids today are deepseek-flash / deepseek-v4-pro. Do NOT advertise them as L1
+  // candidates (they resolve to nothing on the modern API).
+  'deepseek-pro': { tier: 'l1', contextWindow: 1000000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
+  'deepseek-chat': { tier: 'l1', contextWindow: 1000000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
+  'deepseek-reasoner': { tier: 'l1', contextWindow: 1000000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
+  'deepseek-v4-pro': { tier: 'l1', contextWindow: 1000000, sweetSpotRatio: 0.5, dangerRatio: 0.75 },
+  'deepseek-flash': { tier: 'l2', contextWindow: 1000000, sweetSpotRatio: 0.25, dangerRatio: 0.75 },
   'qwen3:14b': { tier: 'l3', contextWindow: 32768, numCtx: 16384, dangerRatio: 0.9 },
   'qwen3:8b': { tier: 'l3', contextWindow: 32768, numCtx: 16384, dangerRatio: 0.9 },
   'qwen2.5:7b': { tier: 'l3', contextWindow: 32768, numCtx: 8192, dangerRatio: 0.9 },
@@ -58,18 +66,21 @@ export const DEFAULT_CONFIG = {
   maxLevel3Concurrency: 1,
   maxLevel2Retries: 3,
   maxLevel2Agents: 10,
-  level2ContextBudget: 32000,
+  level2ContextBudget: 250000, // v129: 1M×0.25 (was 32K under the old 128K assumption)
   level2SweetSpotRatio: 0.25,
   level2HandoffTtlMs: 300000,
-  level1ContextBudget: 64000,
+  level1ContextBudget: 500000, // v129: 1M×0.5 (was 64K under the old 128K assumption)
   level1SweetSpotRatio: 0.5,
   // v97 — the real red line: past this many tokens the model's effective
   // capability degrades hard, so the card must warn before that, not at the
   // (merely optimal) sweet spot.
-  level1DangerBudget: 96000,
-  level2DangerBudget: 96000,
-  level1ContextWindow: 128000,
-  level2ContextWindow: 128000,
+  // v129 — defaults follow the V4-family 1M window (see MODEL_PROFILES):
+  // sweet = 1M×0.5/0.25, danger = 1M×0.75. tuneSweetSpot recomputes these on
+  // any model change anyway; these are only the never-touched starting values.
+  level1DangerBudget: 750000,
+  level2DangerBudget: 750000,
+  level1ContextWindow: 1000000,
+  level2ContextWindow: 1000000,
   level1DangerRatio: 0.75,
   level2DangerRatio: 0.75,
   level1ContextWarnRatio: 0.8,
@@ -120,14 +131,14 @@ export const CONFIG_KEYS = {
   maxLevel3Concurrency: { type: 'number', desc: '三级本地执行器最大并发数（默认 1；ninfer 单实例串行）' },
   maxLevel2Retries: { type: 'number', desc: '二级接管/任务最大尝试次数（超过即上报 L1 干不了）' },
   maxLevel2Agents: { type: 'number', desc: '二级模块负责人数量上限' },
-  level2ContextBudget: { type: 'number', desc: '二级模块上下文 token 预算（二级默认模型甜点区，模块小型化参考；重建已改为无条件触发）' },
+  level2ContextBudget: { type: 'number', desc: '二级模块上下文 token 预算（二级默认模型甜点区，1M 窗口×0.25=250K，v129；模块小型化参考；重建已改为无条件触发）' },
   level2SweetSpotRatio: { type: 'number', desc: '二级甜点区占模型窗口比例（默认 0.25；换 level2Model 且 autoTuneSweetSpot 开时按窗口×比例重算 level2ContextBudget）' },
   level2HandoffTtlMs: { type: 'number', desc: '旧二级交接存活毫秒（默认 300000=5 分钟，超时强制 drain）' },
-  level1ContextBudget: { type: 'number', desc: '一级上下文 token 甜点区（默认 64000；接近时建议 checkpoint 交接）' },
-  level1DangerBudget: { type: 'number', desc: '一级上下文危险线 token（仅提示：装了压缩代理时压力过线不代表能力打折，看板只在逼近此线时变琥珀、过线才变红；默认 96000=128K×0.75）' },
-  level2DangerBudget: { type: 'number', desc: '二级上下文危险线 token（同 L1：压力口径的提醒线，非硬限制；默认 96000=128K×0.75）' },
-  level1ContextWindow: { type: 'number', desc: '一级模型上下文窗口 token（默认 128000；看板横条按窗口画满，读数超过甜点/危险线时变色）' },
-  level2ContextWindow: { type: 'number', desc: '二级模型上下文窗口 token（默认 128000；看板横条按窗口画满，读数超过甜点/危险线时变色）' },
+  level1ContextBudget: { type: 'number', desc: '一级上下文 token 甜点区（默认 500000=1M×0.5，v129；接近时建议 checkpoint 交接）' },
+  level1DangerBudget: { type: 'number', desc: '一级上下文危险线 token（仅提示：装了压缩代理时压力过线不代表能力打折，看板只在逼近此线时变琥珀、过线才变红；默认 750000=1M×0.75）' },
+  level2DangerBudget: { type: 'number', desc: '二级上下文危险线 token（同 L1：压力口径的提醒线，非硬限制；默认 750000=1M×0.75）' },
+  level1ContextWindow: { type: 'number', desc: '一级模型上下文窗口 token（默认 1000000，V4 家族 1M 窗口；看板横条按窗口画满，读数超过甜点/危险线时变色）' },
+  level2ContextWindow: { type: 'number', desc: '二级模型上下文窗口 token（默认 1000000；看板横条按窗口画满，读数超过甜点/危险线时变色）' },
   level1DangerRatio: { type: 'number', desc: '一级危险线占模型窗口比例（默认 0.75；换 level1Model 且 autoTuneSweetSpot 开时按窗口×比例重算 level1DangerBudget）' },
   level2DangerRatio: { type: 'number', desc: '二级危险线占模型窗口比例（默认 0.75；换 level2Model 且 autoTuneSweetSpot 开时按窗口×比例重算 level2DangerBudget）' },
   level1SweetSpotRatio: { type: 'number', desc: '一级甜点区占模型窗口比例（默认 0.5；换 level1Model 且 autoTuneSweetSpot 开时按窗口×比例重算 level1ContextBudget）' },
@@ -277,7 +288,9 @@ export function resolveTuning(cfg, changedKey, profiles) {
   if (!Number.isFinite(ratio) || ratio <= 0) return null
   const dangerRatio = Number(cfg[keys.dangerRatio]) > 0 ? Number(cfg[keys.dangerRatio]) : Number(profile.dangerRatio) || FALLBACK_DANGER_RATIO
   return { window, budget: Math.round(window * ratio), danger: Math.round(window * dangerRatio), source: 'profile' }
-}export function tuneSweetSpot(cfg, changedKey, profiles) {
+}
+
+export function tuneSweetSpot(cfg, changedKey, profiles) {
   if (typeof cfg !== 'object' || cfg === null) {
     return { changed: false, changes: [], target: null, model: null, profileMissing: false }
   }

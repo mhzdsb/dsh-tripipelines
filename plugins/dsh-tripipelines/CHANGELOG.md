@@ -2,6 +2,24 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v129 — 1.33.0（甜点区基准修正：V4 家族窗口是 1M，不是 128K）
+
+### 变更
+- **用户的实操直觉是对的**：`deepseek-flash` 的甜点区一直显示 32K——那是按旧世代 128K 窗口×0.25 算的。DeepSeek V4 模型卡明确整族（Flash 与 Pro）都是 **1,000,000 token 窗口**（"Towards Highly Efficient Million-Token Context Intelligence"；Think Max 建议 ≥384K）。v128 只是让档案外模型去问宿主，档案内的 deepseek 系还停在 128K——等于修了半边。
+- `MODEL_PROFILES`：deepseek-pro/chat/reasoner/v4-pro/flash 全部改 `contextWindow: 1000000`（比例不变：L1 0.5/0.75，L2 0.25/0.75 → flash 甜点 250K、危险线 750K）。三个 legacy 别名加了警示注释：仅为旧配置兜底保留，不要当 L1 候选宣传。
+- `DEFAULT_CONFIG` 同步对齐默认模型的真实窗口：level2ContextBudget 32000→**250000**、level1ContextBudget 64000→**500000**、level1/level2DangerBudget 96000→**750000**、level1/level2ContextWindow 128000→**1000000**。新装用户开箱即对；老用户的全局文件里若存着旧值，下一条模型命令会按 v128 链路自动重算覆盖。
+- CONFIG_KEYS 五条相关 desc 里的"128K×…"字样改为 1M 口径并注明 v129。
+
+### 测试
+- verify-v82 82 断言全过（pinned 默认表更新为 250000/500000；ratio 联动期望 250000→500000；autoTune-off 守护 500000）。
+- v122 跨 provider 配对 31 断言：自配对段改为验证"对齐即静默"（`✔ …已对齐宿主窗口（1000000）`，默认值正确时不再落盘冗余键）；档案回退段用手工拖入的 32000 陈旧值证明 flash 档案恢复 250000、qwen 宿主链路同样拉到 250000。dev/test 双拷贝同步后各自跑绿。
+- 全套 19 套件 exit 0。
+
+### 文档
+- README.md / README.en.md：GUI 看板行与甜点区自适应段落补 v129 注（1M 窗口基准、legacy 别名警告）；ASCII 示意危险线数字口径说明。
+
+版本 1.32.0 → 1.33.0（行为变化：内置档案与出厂默认的甜点/危险/窗口数值从 128K 世代改为 V4 家族真实的 1M 窗口）。
+
 ## v128 — 1.32.0（甜点区数值跟真实窗口走：档案 → 宿主上报 → 未知不画假刻度）
 
 ### 变更

@@ -111,9 +111,9 @@ const V81 = {
   maxLevel3Retries: 5,
   maxLevel2Retries: 3,
   maxLevel2Agents: 10,
-  level2ContextBudget: 32000,
+  level2ContextBudget: 250000, // v129 — 1M-window defaults (previously the stale 128K assumption)
   level2HandoffTtlMs: 300000,
-  level1ContextBudget: 64000,
+  level1ContextBudget: 500000,
   level1ContextWarnRatio: 0.8,
   level3Compression: 'L1',
   devDir: 'dev',
@@ -145,21 +145,21 @@ function freshCfg() {
 let cfg = freshCfg()
 let res = handleConfigCommand(cfg, 'level2SweetSpotRatio 0.5')
 check('ratio set ok', cfg.level2SweetSpotRatio === 0.5, res.text)
-check('ratio change retunes level2ContextBudget', cfg.level2ContextBudget === 64000, String(cfg.level2ContextBudget))
-check('ratio change explains old -> new', /已联动更新 level2ContextBudget: 32000 → 64000/.test(res.text), res.text)
+check('ratio change retunes level2ContextBudget', cfg.level2ContextBudget === 500000, String(cfg.level2ContextBudget))
+check('ratio change explains old -> new', /已联动更新 level2ContextBudget: 250000 → 500000/.test(res.text), res.text)
 
 // 5a2: model change still retunes when the manual budget is out of line
 cfg = freshCfg()
 handleConfigCommand(cfg, 'level2SweetSpotRatio 0.5')
 handleConfigCommand(cfg, 'level2ContextBudget 11111')
 res = handleConfigCommand(cfg, 'level2Model deepseek-pro')
-check('linkage recomputes level2ContextBudget', cfg.level2ContextBudget === 64000, String(cfg.level2ContextBudget))
-check('linkage text explains old -> new', /已联动更新 level2ContextBudget: 11111 → 64000/.test(res.text), res.text)
+check('linkage recomputes level2ContextBudget', cfg.level2ContextBudget === 500000, String(cfg.level2ContextBudget))
+check('linkage text explains old -> new', /已联动更新 level2ContextBudget: 11111 → 500000/.test(res.text), res.text)
 
 // 5b: profile miss -> explicit "no profile" message, no change
 cfg = freshCfg()
 res = handleConfigCommand(cfg, 'level2Model no-such-model')
-check('profile miss keeps budget', cfg.level2ContextBudget === 32000)
+check('profile miss keeps budget', cfg.level2ContextBudget === 250000)
 check('profile miss message', /该模型无档案且宿主未报窗口，甜点区未联动/.test(res.text), res.text)
 
 // 5c: L3 has no sweet spot since v90 (level3NumCtx removed) — change must not touch budgets
@@ -173,7 +173,7 @@ cfg = freshCfg()
 res = handleConfigCommand(cfg, 'autoTuneSweetSpot false')
 check('autoTune off persisted in cfg', cfg.autoTuneSweetSpot === false)
 res = handleConfigCommand(cfg, 'level1Model deepseek-reasoner')
-check('autoTune off -> budget untouched', cfg.level1ContextBudget === 64000)
+check('autoTune off -> budget untouched', cfg.level1ContextBudget === 500000)
 check('autoTune off message', /autoTuneSweetSpot 已关闭/.test(res.text), res.text)
 
 // 5e: manual sweet-spot value wins (no recompute at load) and persists

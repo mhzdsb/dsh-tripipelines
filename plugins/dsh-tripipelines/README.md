@@ -192,7 +192,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines')  # 本地 / de
 
 **关闭三级（v124）**：`/pipe-config level3Mode off` 把插件切成两级协作——L1 照常规划、派发模块负责人、验收里程碑，L2 自己写全部代码（写完 `pipeline_register_output` 登记、`pipeline_review` 过质量门）。off 时三个 L3 派发入口（`execute_local` / `execute_batch` / `spawn_local_executor`）都会被明确拒绝并给出直写路径；改 `level3Model` 不会偷偷恢复三级，恢复要显式 `/pipe-config level3Mode auto`（或换模型时带 `mode=auto`）。开工清单与提问会同步显示「已关闭」状态并提供恢复命令。
 
-**甜点区自适应（v128 修正）**：换 `level1Model`/`level2Model` 时自动重算预算——先查内置 `MODEL_PROFILES` 档案（窗口 × 比例），档案没有就向宿主查询该模型的真实上下文窗口（`llm.resolveModelInfo`）并按默认比例（甜点 25% / 危险 75%）落数；两边都查不到才提示手动设，看板同时把该条标成「窗口未知」不画假刻度。此前档案外模型（如千问 Token Plan 的 1M 窗口模型）会一直停留在 flash 的 32K/96K/128K 旧数值，v128 起不再发生。
+**甜点区自适应（v128 修正，v129 校准基准）**：换 `level1Model`/`level2Model` 时自动重算预算——先查内置 `MODEL_PROFILES` 档案（窗口 × 比例），档案没有就向宿主查询该模型的真实上下文窗口（`llm.resolveModelInfo`）并按默认比例（甜点 25% / 危险 75%）落数；两边都查不到才提示手动设，看板同时把该条标成「窗口未知」不画假刻度。此前档案外模型（如千问 Token Plan 的 1M 窗口模型）会一直停留在 flash 的 32K/96K/128K 旧数值，v128 起不再发生。**v129 进一步修正了档案本身**：DeepSeek V4 整族是 1M token 窗口（模型卡口径），flash 甜点区从 32K 上调为 250K、L1 甜点 500K/危险线 750K——旧的 128K 世代假设已按官方规格替换。
 
 ## 使用
 
