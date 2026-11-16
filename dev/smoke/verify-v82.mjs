@@ -33,7 +33,7 @@ function check(label, cond, extra) {
 
 // v90 split: plugin.js now depends on sibling modules — copy them all next to the
 // patched copies (config gets a temp CONFIG_FILE, store a temp state dir).
-for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js']) {
+for (const f of ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js', 'superagent-bridge.js']) {
   copyFileSync(new URL('lib/' + f, root), join(tmp, f))
 }
 mkdirSync(join(tmp, 'tools'), { recursive: true })

@@ -310,6 +310,9 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile =
     keyFor,
     resolve,
     peek,
+    // v133 — the superagent bridge resolves a ticket directory to its store
+    // without going through session plumbing (the worker's cwd IS the key).
+    ensure,
     bindChild,
     tierOf,
     entryForRoute,

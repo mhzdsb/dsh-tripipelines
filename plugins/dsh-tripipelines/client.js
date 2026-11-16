@@ -57,6 +57,8 @@ window.__ModuleLoader__.load({
       no_milestones: '无里程碑',
       l1_row: (model) => `L1 ${model}`,
       l2_row: (label, model) => `L2 ${label} · ${model}`,
+      ticket_badge: '🎫 工单',
+      ticket_tip: 'superagent bridge：这是 dsh-superagent 的工单工作区，本看板由桥接层点亮',
     }
     const L_EN = {
       title: 'Pipeline',
@@ -86,6 +88,8 @@ window.__ModuleLoader__.load({
       no_milestones: 'No milestones',
       l1_row: (model) => `L1 ${model}`,
       l2_row: (label, model) => `L2 ${label} · ${model}`,
+      ticket_badge: '🎫 ticket',
+      ticket_tip: 'superagent bridge: this is a dsh-superagent ticket workspace; the board is lit by the bridge',
     }
     // Translate helper: props.t from the slot framework when present, zh dictionary
     // otherwise. Function values are called with their args; missing keys echo the key.
@@ -327,6 +331,10 @@ window.__ModuleLoader__.load({
       const accepted = milestones.filter((m) => m.state === 'accepted').length
       const doneUnaccepted = milestones.filter((m) => m.state === 'done')
       const paused = run.paused === true
+      // v133 — a workspace whose L1 marker was planted by the superagent bridge is a
+      // dsh-superagent ticket; mark it so the two boards (orchestrator panel vs this
+      // card) are never confused for each other.
+      const isTicket = agents.some((a) => a.via === 'bridge')
       const accent = paused || run.status === 'active' ? C.warn : run.status === 'done' ? C.ok : C.idle
       const detail = [
         t('run_line', run.id || '(none)', `status_${run.status}` in L_ZH ? t(`status_${run.status}`) : run.status, paused ? t('paused_suffix', run.pauseReason || t('status_paused')) : ''),
@@ -596,6 +604,25 @@ window.__ModuleLoader__.load({
               }),
             ),
             h('span', { style: { color: C.text, fontWeight: 700, fontSize: 13 } }, t('title')),
+            // v133 — ticket badge (superagent bridge workspace).
+            isTicket
+              ? h(
+                  'span',
+                  {
+                    title: t('ticket_tip'),
+                    style: {
+                      color: C.sub,
+                      fontSize: 10,
+                      lineHeight: '14px',
+                      padding: '0 5px',
+                      borderRadius: 999,
+                      border: `1px solid ${C.line || 'rgba(255,255,255,.14)'}`,
+                      flex: 'none',
+                    },
+                  },
+                  t('ticket_badge'),
+                )
+              : null,
             h(
               'span',
               {

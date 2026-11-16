@@ -13,3 +13,8 @@ plugins/dsh-tripipelines/src/
 dev/_backup/
 dev/_probe*
 *.log
+
+# local scratch from audits/probes (never publish)
+.tmp/
+.audit-tmp/
+

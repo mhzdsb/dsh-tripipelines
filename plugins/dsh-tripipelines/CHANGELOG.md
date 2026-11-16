@@ -2,6 +2,22 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v133 — 1.36.0（superagent 融合：工单 worker 变身 L1）
+
+### 变更
+- **新增 `lib/superagent-bridge.js`（P1 桥接层）**：检测到官方原型 dsh-superagent-prototype 的 `orchestrator` 服务时激活，否则完全惰性。识别 worker 会话（preset 含 `dsh-superagent-worker` 或标题 `worker-` 前缀；启动时补扫一次已存在会话），在该会话的 **agent 作用域**上注册 11 个精简流水线工具（lock/plan/status/decompose/execute_local/execute_batch/review/spawn_local_executor/register_output/checkpoint/accept_milestone）。作用域注册不受 superagent 对 worker 施加的全局 `restrict` 白名单遮蔽——这正是它自己 orchestrator_* 工具的存活原理（宿主文档：caller 自身作用域的注册在 allow/deny 掩码之外）。刻意**不含** spawn_module_lead/send_to_lead/drain_leads：L2 委派归编排器调度层。
+- **工单目录即工作区**：ticket 的 cwd 直接作为本插件工作区注册表的 key（不做 findProjectRoot 向上走，避免家目录守卫误伤）；bridge 在 board 里种一条 `kind:l1 via:bridge` 标记使邻接守卫认 worker 为 L1（review/register_output 合法、派发类仍拒——角色矩阵不被绕过）。`workspaces.js` 导出 `ensure(key)` 供桥接层按目录取 store。
+- **看板工单徽标**：board-route 的 agents 投影放行 `via:'bridge'` 记录并带出 `via` 字段；client.js 在卡片标题行渲染「🎫 工单」小徽标（zh/en 双语字典各 +2 键，parity 校验通过），悬浮说明该看板来自 superagent 工单。
+- **plugin.js 接线**：apply() 里 try/catch 调 `installSuperagentBridge(ctx,cfg,registry)`，任何异常只 warn 不拖垮本体。
+- **P0 文档**：新增 `docs/superagent-fusion.md`（共存前提 / patch 插入示例 / bridge 自动行为 5 点 / 边界与风险）与 `examples/superagent-team-skill.md`（可直接粘贴进 superagent PromptConfig.skills["tripipelines"] 的团队技能文本，经 `dsh-superagent-` 前缀机制注入每个 worker）。
+
+### 测试
+- 新增 `test/smoke/v133_superagent_bridge_smoke.mjs`（dev/smoke 镜像）：18 项检查全过——无 orchestrator 时惰性零副作用；注入 11 个作用域工具且排除派发三件套；描述带 bridge 标注；幂等二次事件；ticket 工作区 peek/store 落盘共享；tierOf==='l1'；lock 真实执行返回 run_id；非 worker 会话不受影响；启动补扫捕获先存在的 worker。
+- verify-v82 / v90 / v92 三个扁平复制式 harness 的拷贝清单加入 `superagent-bridge.js`。全套 21 个 suite `npm test` exit 0。
+
+### 文档
+- README 无需改动（融合是可选共存能力）；版本 1.35.0 → 1.36.0（新增能力，无破坏性变更）。
+
 ## v132 — 1.35.0（全面审计修复：归档幽灵、里程碑校验、项目层锚定、市场规范、双语看板）
 
 ### 变更

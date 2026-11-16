@@ -20,6 +20,7 @@ import { resolveInside } from './util.js'
 import { makeModelSetupTool, makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
 import { makeKnowledgeTools } from './tools/knowledge.js'
 import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeReviewTool, makeSpawnLocalExecutorTool, makeRegisterOutputTool } from './tools/l2l3.js'
+import { installSuperagentBridge } from './superagent-bridge.js'
 
 const name = 'pipeline'
 const inject = ['tools', 'systemPrompt', 'skills', 'commands', 'llm']
@@ -144,6 +145,19 @@ function apply(ctx, config) {
     }
     if (soft.length) {
       console.warn(`[pipeline] 宿主缺少可选 API：${soft.join('、')}；上下文计量退回估算，读数偏小（功能可用）。`)
+    }
+  })()
+
+  // v133 — superagent bridge: when the dsh-superagent-prototype runs in this
+  // profile, inject a reduced pipeline surface into each ticket worker session
+  // (scoped registration survives their WORK_TOOLS restrict). Inert otherwise.
+  void (async () => {
+    try {
+      installSuperagentBridge(ctx, cfg, registry)
+    } catch (err) {
+      // The bridge is strictly optional (dsh-superagent-prototype integration);
+      // a prototype API change must never take the pipeline down with it.
+      console.warn(`[pipeline] superagent bridge 未启用：${err?.message ?? err}`)
     }
   })()
 

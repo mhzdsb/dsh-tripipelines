@@ -70,7 +70,7 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
     state: t.state ?? 'pending',
   }))
   const agents = [...store.agents.values()]
-    .filter((a) => a && a.kind === 'l2')
+    .filter((a) => a && (a.kind === 'l2' || a.via === 'bridge'))
     .map((a) => {
       // Cache the live reading on the record so a finished lead keeps its truth.
       let measured = null
@@ -91,6 +91,8 @@ export function buildBoardSnapshot(r, cfg, measureTokens) {
         state: a.state ?? 'in_progress',
         model: a.model ?? '',
         scopeDir: a.scopeDir ?? null,
+        // v133 — the client shows a ticket badge when an L1 marker came from the bridge.
+        via: a.via ?? null,
         estimatedTokens: Number(a.estimatedTokens) || 0,
         tokens: measured,
         measured: live,
