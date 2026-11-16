@@ -13,28 +13,28 @@ const check = (label, cond, extra) => {
   else { failed++; console.log(`FAIL  ${label}${extra ? `  :: ${extra}` : ''}`) }
 }
 
-const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js', 'superagent-bridge.js']
-for (const f of flat) copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
+const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js', 'superagent-bridge.js', 'config-apply.js']
+for (const f of flat) copyFileSync(new URL('lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 mkdirSync(join(tmp, 'knowledge'), { recursive: true })
 for (const f of ['knowledge/scan.js', 'knowledge/ledger.js', 'knowledge/recall.js']) {
-  copyFileSync(new URL('plugins/dsh-tripipelines/lib/' + f, root), join(tmp, f))
+  copyFileSync(new URL('lib/' + f, root), join(tmp, f))
 }
-for (const f of ['l1.js', 'l2l3.js', 'knowledge.js']) copyFileSync(new URL('plugins/dsh-tripipelines/lib/tools/' + f, root), join(tmp, 'tools', f))
+for (const f of ['l1.js', 'l2l3.js', 'knowledge.js']) copyFileSync(new URL('lib/tools/' + f, root), join(tmp, 'tools', f))
 
-const cfgSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/config.js', root), 'utf8')
+const cfgSrc = readFileSync(new URL('lib/config.js', root), 'utf8')
   .replace(
     "export const CONFIG_FILE = join(homedir(), '.dsh', 'pipeline', 'config.json')",
     `export const CONFIG_FILE = ${JSON.stringify(join(tmp, 'config.json').replace(/\\/g, '/'))}`,
   )
 writeFileSync(join(tmp, 'config.js'), cfgSrc, 'utf8')
-const stSrc = readFileSync(new URL('plugins/dsh-tripipelines/lib/store.js', root), 'utf8')
+const stSrc = readFileSync(new URL('lib/store.js', root), 'utf8')
   .replace(
     "return join(base, '.dsh', 'pipeline')",
     `return ${JSON.stringify(join(tmp, 'state').replace(/\\/g, '/'))}`,
   )
 writeFileSync(join(tmp, 'store.js'), stSrc, 'utf8')
-copyFileSync(new URL('plugins/dsh-tripipelines/lib/plugin.js', root), join(tmp, 'plugin.js'))
+copyFileSync(new URL('lib/plugin.js', root), join(tmp, 'plugin.js'))
 
 const imp = (rel) => import(pathToFileURL(join(tmp, rel)).href)
 const cfgMod = await imp('config.js')
@@ -102,7 +102,7 @@ check('plugin applies cleanly', (() => {
       logger: { info: () => {}, warn: () => {} },
     }
     pluginMod.apply(ctx2, { ...cfgMod.DEFAULT_CONFIG })
-    check('20 tools registered', registered.length === 20, String(registered.length))
+    check('21 tools registered', registered.length === 21, String(registered.length)) // v134: +pipeline_config_set
     check('7 commands registered', commands.length === 7, String(commands.length))
     return true
   } catch (e) {

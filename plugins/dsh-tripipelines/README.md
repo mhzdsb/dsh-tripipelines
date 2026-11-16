@@ -210,6 +210,7 @@ plugin_manager install_bundle('link:C:/path/to/dsh-tripipelines')  # 本地 / de
 | 工具 | 层级 | 作用 |
 |---|---|---|
 | `pipeline_model_setup` | L1 | 开工先定模型：列出本机全部 L2/L3 模型 + 可复制命令，落默认或自定义（v121） |
+| `pipeline_config_set` | L1 | 运行中直接改配置/换模型：语法同 `/pipe-config`（去掉斜杠），自动配对 provider、联动甜点区、写项目层（v134） |
 | `pipeline_lock_requirements` | L1 | 锁定需求，开 run（可带 `activation`） |
 | `pipeline_plan` | L1 | 记录 TaskPlan（依赖 DAG + 环检测 + 里程碑声明；验收必须是断言 / `cmd:` / 阈值≤0.5 的关键词分，v119） |
 | `pipeline_spawn_module_lead` | L1→L2 | 生成长活模块负责人（默认配置的模型；可传 `scopeDir` 独立工作目录、`provider`/`model` 单独指定模型） |

@@ -28,6 +28,11 @@ FIRST thing in every project, before the requirement interview or any lock:
    - 我自己指定 → the user's `/pipe-config ...` line (or a direct reply). After it runs, call
      `pipeline_model_setup({apply:'custom'})` with no args so this project records the current
      values; passing `level2Model` / `level2Provider` / `level3Model` / `level3Mode` also works.
+     When the user just tells you the model in chat ("二级换成 x"), run
+     `pipeline_config_set({input:"level2Model x"})` yourself — same engine as the slash command
+     (auto-pairs provider, retunes, writes the project layer when one exists) — then record it
+     with `pipeline_model_setup({apply:'custom'})`. Mid-run swaps work the same way; never use
+     it for level1Model (the chat model is the user's own pick).
    - 本项目不用三级 → `/pipe-config mode off` (or activation=normal) and stay single-agent.
 4. Do not skip a new project: `pipeline_lock_requirements` returns `modelSetupHint` until the
    workspace has a model-setup record. Re-running in the same workspace: the tool reports

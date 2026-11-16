@@ -16,6 +16,9 @@ export function buildProtocolText(cfg) {
     'Dispatch = end turn and wait for push reports; never poll, reply to reports. Done-but-unaccepted milestone blocks spawn/send: acceptance dialog, then pipeline_accept_milestone. ⏸️ budget paused — tell the user.',
     `Config: mode ${cfg.mode}; L3 retry ${cfg.maxLevel3Retries}; L2 retry ${cfg.maxLevel2Retries}; gate ${cfg.semanticGateThreshold}; takeover ${cfg.allowLevel1Takeover === true ? 'on' : 'off'}; L3 ${cfg.level3Mode === 'off' ? 'OFF (two-tier)' : `mode ${cfg.level3Mode ?? 'auto'} (${cfg.level3Model})`}.`,
     'Onboarding (every project, first step): call pipeline_model_setup once, paste its `message`, ask its `question` (also covers the one-time activation gate); defaults if skipped. Bare /pipe-config level2Model|level3Model <id> self-pairs provider; mode=agent for a cloud L3, level3Mode off for two-tier.',
+    // v134 — the coordinator can now change L2/L3 configuration itself instead of
+    // pasting a slash command back and waiting: same engine, tool-shaped.
+    'You can change L2/L3 model/provider/config yourself with pipeline_config_set (same syntax as /pipe-config without the slash, e.g. "level2Model <id>" — auto-pairs provider + retunes; writes the project layer when one exists). Never change level1Model (the chat model is the user\'s pick).',
     'Lock requirements first (ask only for missing credentials). Existing repo: pipeline_scan + pipeline_ledger once, then answer from pipeline_recall.',
   ].join('\n')
 }
@@ -24,8 +27,8 @@ export function buildProtocolText(cfg) {
 // short text replaces the routing protocol entirely.
 export function buildProtocolOffText() {
   return [
-    '流水线已关闭（mode=off）：当前只注册 pipeline_status / pipeline_classify / pipeline_selftest / pipeline_scan / pipeline_ledger / pipeline_recall。',
-    '不要派发 L2/L3、不要启动新的 run。用户需要恢复时执行 /pipe-config mode auto，重载后生效。',
+    '流水线已关闭（mode=off）：当前只注册 pipeline_status / pipeline_config_set / pipeline_classify / pipeline_selftest / pipeline_scan / pipeline_ledger / pipeline_recall。',
+    '不要派发 L2/L3、不要启动新的 run。恢复配置（含 mode auto 重新启用）可直接用 pipeline_config_set；用户也可执行 /pipe-config mode auto，重载后生效。',
   ].join('\n')
 }
 
@@ -130,6 +133,11 @@ FIRST thing in every project, before the requirement interview or any lock:
    - 我自己指定 → the user's \`/pipe-config ...\` line (or a direct reply). After it runs, call
      \`pipeline_model_setup({apply:'custom'})\` with no args so this project records the current
      values; passing \`level2Model\` / \`level2Provider\` / \`level3Model\` / \`level3Mode\` also works.
+     When the user just tells you the model in chat ("二级换成 x"), run
+     \`pipeline_config_set({input:"level2Model x"})\` yourself — same engine as the slash command
+     (auto-pairs provider, retunes, writes the project layer when one exists) — then record it
+     with \`pipeline_model_setup({apply:'custom'})\`. Mid-run swaps work the same way; never use
+     it for level1Model (the chat model is the user's own pick).
    - 本项目不用三级 → \`/pipe-config mode off\` (or activation=normal) and stay single-agent.
 4. Do not skip a new project: \`pipeline_lock_requirements\` returns \`modelSetupHint\` until the
    workspace has a model-setup record. Re-running in the same workspace: the tool reports

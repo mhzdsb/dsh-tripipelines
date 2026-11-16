@@ -10,6 +10,7 @@
 
 export const RUN_FOOTER_TOOLS = new Set([
   'pipeline_model_setup',
+  'pipeline_config_set',
   'pipeline_lock_requirements',
   'pipeline_plan',
   'pipeline_status',
@@ -83,6 +84,10 @@ export function withRunFooter(tool) {
 // it and the L2 guard rejected L2 callers: it had no legal caller at all.
 export const L1_ONLY_TOOLS = new Set([
   'pipeline_model_setup',
+  // v134 — the config-change tool mirrors /pipe-config: it rewrites which model
+  // every tier runs on, so it belongs to the coordinator alone. Deliberately NOT
+  // in EXECUTION_TOOLS: a budget-paused or off workspace must stay repairable.
+  'pipeline_config_set',
   'pipeline_lock_requirements',
   'pipeline_plan',
   'pipeline_classify',

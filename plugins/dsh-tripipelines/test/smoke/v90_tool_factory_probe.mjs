@@ -13,7 +13,7 @@ const check = (label, cond, extra) => {
   else { failed++; console.log(`FAIL  ${label}${extra ? `  :: ${extra}` : ''}`) }
 }
 
-const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js', 'superagent-bridge.js']
+const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js', 'superagent-bridge.js', 'config-apply.js']
 for (const f of flat) copyFileSync(new URL('lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 mkdirSync(join(tmp, 'knowledge'), { recursive: true })
@@ -102,7 +102,7 @@ check('plugin applies cleanly', (() => {
       logger: { info: () => {}, warn: () => {} },
     }
     pluginMod.apply(ctx2, { ...cfgMod.DEFAULT_CONFIG })
-    check('20 tools registered', registered.length === 20, String(registered.length))
+    check('21 tools registered', registered.length === 21, String(registered.length)) // v134: +pipeline_config_set
     check('7 commands registered', commands.length === 7, String(commands.length))
     return true
   } catch (e) {

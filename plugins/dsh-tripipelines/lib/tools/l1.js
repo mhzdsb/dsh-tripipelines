@@ -7,7 +7,8 @@ import { text, LEVEL2_NAMES, TASK_STATES, estimateTokens, ensureDir, numCfg, jso
 import { validateTaskPlan, validateAcceptanceCriteria, cleanupExpiredL2s } from '../gates.js'
 import { milestoneStates, loadActivation, saveActivation, loadModelSetup, saveModelSetup, addRunUsage, storeToBoard } from '../store.js'
 import { buildL2LeadPrompt } from '../prompts.js'
-import { DEFAULT_CONFIG, MODEL_PROFILES, savePersistedConfig, tuneSweetSpot } from '../config.js'
+import { DEFAULT_CONFIG, MODEL_PROFILES, tuneSweetSpot } from '../config.js'
+import { persistConfigPatch, applyConfigChange } from '../config-apply.js'
 import {
   autoPairAfterConfig,
   buildModelSetupQuestion,
@@ -68,12 +69,29 @@ function accountL2Tokens(ctx, cfg, r) {
   return delta
 }
 
+// v134 — which workspace root does this tool's mutated `cfg` belong to? The
+// registry hands out a per-root merged view (wsCfg) when the workspace carries a
+// project layer; matching by identity finds the right layer to write back into.
+// Falls back to the store's own root (global-view callers).
+function cfgRoot(cfg, r, registry) {
+  try {
+    if (registry && typeof registry.keys === 'function') {
+      for (const key of registry.keys()) {
+        const entry = registry.entryOf?.(key)
+        if (entry && entry.cfg === cfg && entry.root) return entry.root
+      }
+    }
+  } catch { /* fall through */ }
+  return r?.store?.workspaceRoot ?? null
+}
+
 // v121 — per-project model onboarding. One call discovers every local L2/L3
 // model, renders the copyable `/pipe-config` block, and (optionally) applies the
-// choice. The choice is persisted exactly like `/pipe-config` (global
-// config.json) and remembered per workspace so the same project is not asked
-// twice. L1 pastes `message` verbatim and asks `question`.
-export function makeModelSetupTool(ctx, cfg, r) {
+// choice. The choice is persisted exactly like `/pipe-config` (v134: through the
+// layer-aware writer, so a workspace with a project layer is not re-shadowed at
+// the next store load) and remembered per workspace so the same project is not
+// asked twice. L1 pastes `message` verbatim and asks `question`.
+export function makeModelSetupTool(ctx, cfg, r, registry = null) {
   return {
     name: 'pipeline_model_setup',
     description:
@@ -234,7 +252,10 @@ export function makeModelSetupTool(ctx, cfg, r) {
         for (const k of ['level1ContextWindow', 'level1ContextBudget', 'level1DangerBudget', 'level2ContextWindow', 'level2ContextBudget', 'level2DangerBudget', 'level2Provider', 'level3Provider', 'level3Mode']) {
           if (patch[k] === undefined && cfg[k] !== DEFAULT_CONFIG[k]) healPatch[k] = cfg[k]
         }
-        savePersistedConfig({ ...patch, ...healPatch })
+        // v134 — layer-aware persist: global config.json always, PLUS the
+        // project file when THIS workspace has one (previously a project-layer
+        // workspace silently re-shadowed this choice on the next store load).
+        persistConfigPatch(cfg, cfgRoot(cfg, r, registry), { ...patch, ...healPatch })
         saveModelSetup(r.stateDir, {
           mode: apply,
           level2Model: cfg.level2Model,
@@ -264,7 +285,7 @@ export function makeModelSetupTool(ctx, cfg, r) {
         for (const k of ['level1ContextWindow', 'level1ContextBudget', 'level1DangerBudget', 'level2ContextWindow', 'level2ContextBudget', 'level2DangerBudget', 'level2Provider', 'level3Provider', 'level3Mode']) {
           if (cfg[k] !== DEFAULT_CONFIG[k]) heal[k] = cfg[k]
         }
-        if (Object.keys(heal).length > 0) savePersistedConfig(heal)
+        if (Object.keys(heal).length > 0) persistConfigPatch(cfg, cfgRoot(cfg, r, registry), heal)
       }
       const current = { level2Provider: cfg.level2Provider, level2Model: cfg.level2Model, level3Model: cfg.level3Model, level3Provider: cfg.level3Provider, level3Mode: cfg.level3Mode }
       const activationMergedNow = activationOpen && !args.activation && !alreadyConfigured
@@ -1198,6 +1219,48 @@ export function makeAcceptMilestoneTool(ctx, cfg, r) {
         milestones: states,
         // Automatic handoff once the whole plan is accepted.
         ...(allAccepted ? { checkpointHint: '所有里程碑已验收。现在调 pipeline_checkpoint 把状态固化成文件（交接契约），这样下一个会话可以冷启动继续。' } : {}),
+      }
+    },
+  }
+}
+
+// v134 — L1-callable configuration change. The /pipe-config slash command has
+// always been user-side only, so when the user said "换个模型跑二级" the L1 could
+// only paste a command back and wait. This tool runs the EXACT same layer-aware
+// pipeline (handleConfigCommand → project-layer redirect → provider pairing +
+// sweet-spot tuning) against this workspace's merged view. L1-only by guard; it
+// deliberately stays OUT of EXECUTION_TOOLS so a budget-paused or off workspace
+// can still be repaired through it.
+export function makeConfigSetTool(ctx, cfg, r, registry = null) {
+  return {
+    name: 'pipeline_config_set',
+    description:
+      'Change the orchestrator configuration mid-run as the L1 (same syntax as the /pipe-config command): "level2Model <id>", "level3Model <id> mode=agent", "provider=<pid>" aliases, thresholds, budgets, "list", "reset". Model changes auto-pair their provider and retune the sweet spot; a workspace with dev/pipeline-project.json gets its PROJECT layer updated so the change survives reloads. Do not change level1Model — the chat model is the user\'s choice.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['input'],
+      properties: {
+        input: {
+          type: 'string',
+          description:
+            'One /pipe-config-style command WITHOUT the leading slash, e.g. "level2Model deepseek-flash" or "level3Model qwen3.7-plus mode=agent". Empty/list shows current values; a bare key views one key.',
+        },
+      },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (_a, value) => text(String(value?.text ?? JSON.stringify(value))),
+    },
+    async execute(args, exec) {
+      if (typeof args.input !== 'string') {
+        throw new Error('input must be a string (one /pipe-config-style command without the slash)')
+      }
+      const { result } = await applyConfigChange(ctx, cfg, registry, args.input, exec ?? r)
+      return {
+        kind: result?.kind ?? 'error',
+        text: result?.text ?? '(no result)',
+        changed: Array.isArray(result?.changed) ? result.changed : [],
       }
     },
   }

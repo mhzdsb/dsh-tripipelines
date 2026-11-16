@@ -442,7 +442,10 @@ export async function resolveHostTuning(ctx, cfg, tierKey, { timeoutMs = 2500 } 
 // plugin wraps it with this best-effort follow-up: the provider (and for L3 the
 // mode) must follow the model or the API rejects it with "supported API model
 // names are ...". Mutates cfg, persists only the keys it corrected, returns notes.
-export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 2500, store = null } = {}) {
+// v134 — persist(opts.persist): when given, corrected keys go through that
+// layer-aware writer instead of savePersistedConfig directly (config-apply uses
+// it so pairing corrections land in the SAME layer as the edit).
+export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 2500, store = null, persist = null } = {}) {
   const set = new Set(Array.isArray(changed) ? changed : [])
   const notes = []
   const patch = {}
@@ -538,8 +541,7 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
     // same command IS the re-enable signal and falls through to detection.
     if (cfg.level3Mode === 'off' && !(set.has('level3Mode') && modeExplicit)) {
       notes.push('ℹ️ 三级已关闭（level3Mode=off）：模型改动不会自动恢复三级；要重新启用发 /pipe-config level3Mode auto。')
-      return notes
-    }
+    } else {
     const engine = await discoverLevel3Models(cfg, { timeoutMs: Math.min(timeoutMs, 2500) })
     const inEngine = engine.source === 'engine' && engine.models.some((m) => m.id === cfg.level3Model)
     if (inEngine) {
@@ -571,10 +573,15 @@ export async function autoPairAfterConfig(ctx, cfg, changed = [], { timeoutMs = 
         notes.push(`⚠️ ${cfg.level3Model} 不在本机引擎、也不在已发现的 llm provider 里；level3Mode 保持 ${cfg.level3Mode ?? 'auto'}`)
       }
     }
+    }
   }
 
   if (Object.keys(patch).length > 0) {
-    try { savePersistedConfig(patch) } catch { /* best-effort */ }
+    if (typeof persist === 'function') {
+      try { persist(patch) } catch { /* best-effort */ }
+    } else {
+      try { savePersistedConfig(patch) } catch { /* best-effort */ }
+    }
   }
   return notes
 }

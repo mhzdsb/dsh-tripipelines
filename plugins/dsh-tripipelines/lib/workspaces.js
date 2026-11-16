@@ -313,6 +313,9 @@ export function createWorkspaceRegistry({ ctx, cfg, buildTools, log, knownFile =
     // v133 — the superagent bridge resolves a ticket directory to its store
     // without going through session plumbing (the worker's cwd IS the key).
     ensure,
+    // v134 — direct entry lookup by key (config-apply matches the per-root
+    // merged cfg against entries to redirect patches into the right layer).
+    entryOf: (key) => entries.get(key) ?? null,
     bindChild,
     tierOf,
     entryForRoute,

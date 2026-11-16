@@ -2,6 +2,23 @@
 
 > 版本号规则：包版本走语义化 `x.y.z`；迭代代号 `vN` 是本机开发部署号——Electron 桌面端按「模块真实路径」缓存导入结果，本机改代码后需**复制到全新目录 + 重装**才能生效（普通用户从市场升级无感）。v114 起 bundle 名为 `dsh-tripipelines-vN`，此前为 `dsh-pipeline-vN`。v109 及更早的条目已归档到 [CHANGELOG-archive.md](CHANGELOG-archive.md)。
 
+## v134 — 1.37.0（L1 自助改配置：pipeline_config_set + 层感知持久化统一）
+
+### 变更
+- **新增 `lib/config-apply.js`——唯一的层感知配置变更管线**：原先这套流程（解析校验 → 项目层重定向 → provider 自动配对 + 甜点区联动 → 配对修正回写同层）内联在 plugin.js 的 pipe-config 处理器里；现在抽成共享模块，斜杠命令与新工具走同一实现，不会再有两套语义漂移。导出 `projectFileOf` / `persistConfigPatch` / `applyConfigChange`。
+- **新工具 `pipeline_config_set`（L1 可调用）**：运行中直接改 L2/L3 模型与 provider、任何配置键——语法与 `/pipe-config` 完全一致（去掉斜杠）：`level2Model <id>`、`level3Model <id> mode=agent`、`provider=<pid>`、`list`、`reset`。自动配对 provider、联动甜点区、有项目层时写入项目层。邻接守卫入 L1_ONLY（L2/L3 调用被拒）；刻意不进 EXECUTION_TOOLS——预算暂停/关闭中的工作区仍可修复配置。协议文本与 SKILL Phase0「我自己指定」分支同步更新（用户在聊天里说"二级换成 x"，L1 自己跑掉，不再要求用户复制命令）。禁止用它改 level1Model（聊天模型是用户自己的选择）。
+- **修 `pipeline_model_setup` 的项目层遮蔽缺陷（C7 同类 bug 的最后一条路径）**：它此前只写全局 config.json——带 `<devDir>/pipeline-project.json` 的工作区选完模型，下次加载又被项目层静默盖回去。现在两处持久化都走 `persistConfigPatch`：显式键进全局、合并视图回写项目层；无项目层的工作区也会把显式改动种进 project.json，防止后续他处 heal 反向遮蔽。
+- **`autoPairAfterConfig` 增加 `persist` 注入口**（models.js）：给定则配对/调优修正经调用方的层感知写入器落盘；同时修掉一个潜在 bug——`level3Mode=off` 分支原来提前 return 跳过了已累积修正的持久化，现改为落入统一尾部。
+- **OFF_MODE_TOOLS 收录 `pipeline_config_set`**：全局 mode=off 时它是留在桌面上的修复通道（`/pipe-config` 之外的模型侧入口）。
+- workspaces.js 注册表导出 `entryOf(key)`（桥接/持久化按 key 取条目）。
+
+### 测试
+- 新增 `test/smoke/v134_l1_config_tool_smoke.mjs`（23 项，dev/smoke 镜像同步）：守卫位置矩阵、引擎平价（渲染/查看/未知键报错/别名）、项目层重定向端到端（A 写项目层 B 不受影响）、model_setup 层感知落盘（含"空项目层也要种入"回归）、session-less 全局回退、pipe-config 薄壳平价、配对修正同层再同步。
+- v90 工厂探针 / v103 隔离 smoke 的工具计数 20→21；v82/v92/v90 的 lib 平铺清单补 `config-apply.js`。全量 `npm test` 22 套件 exit 0。
+
+### 文档
+- README（zh/en）工具面表加 `pipeline_config_set` 行；QUICKSTART「改配置」行注明可直接告诉一级。版本 1.36.0 → 1.37.0。
+
 ## v133 — 1.36.0（superagent 融合：工单 worker 变身 L1）
 
 ### 变更

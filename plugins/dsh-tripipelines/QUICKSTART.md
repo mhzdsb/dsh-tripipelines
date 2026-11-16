@@ -89,7 +89,7 @@ L3 engine              OK (HTTP 200；模型 local-a, local-b)
 | 继续 | `/pipe-resume` |
 | 彻底关掉，变回普通 agent | `/pipe-off` |
 | 看当前进度 | `pipeline_status`（或 `/pipe-config`） |
-| 改配置 | `/pipe-config <键> <值>`（模型名直接写，provider 自动配对；可带 `mode=agent`） |
+| 改配置 | `/pipe-config <键> <值>`（模型名直接写，provider 自动配对；可带 `mode=agent`）；也可以直接告诉一级"二级换成 x"，它自己跑 `pipeline_config_set`（v134，同一引擎） |
 
 ## 常见问题
 

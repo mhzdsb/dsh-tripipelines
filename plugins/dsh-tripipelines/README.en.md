@@ -209,6 +209,7 @@ Open a fresh session and just describe what you want (a few sentences — no man
 | Tool | Tier | Purpose |
 |---|---|---|
 | `pipeline_model_setup` | L1 | pick models first: lists every local L2/L3 model + copyable commands, lands defaults or custom (v121) |
+| `pipeline_config_set` | L1 | change config/models mid-run: same syntax as `/pipe-config` without the slash; auto-pairs provider, retunes sweet spots, honors the project layer (v134) |
 | `pipeline_lock_requirements` | L1 | lock requirements, open a run (may carry `activation`) |
 | `pipeline_plan` | L1 | record the TaskPlan (dependency DAG + cycle check + milestone declarations; acceptance must be assertions / `cmd:` / keyword score ≤ 0.5 threshold, v119) |
 | `pipeline_spawn_module_lead` | L1→L2 | spawn a long-lived module lead (configured model; optional `scopeDir` isolation, `provider`/`model` override) |

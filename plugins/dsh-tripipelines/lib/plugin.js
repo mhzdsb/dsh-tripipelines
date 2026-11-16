@@ -8,16 +8,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, relative, resolve } from 'node:path'
 
-import { DEFAULT_CONFIG, loadPersistedConfig, savePersistedConfig, migratePersistedLevel3Config, mergeConfigLayers, handleConfigCommand, loadProjectConfig } from './config.js'
+import { DEFAULT_CONFIG, loadPersistedConfig, savePersistedConfig, migratePersistedLevel3Config, mergeConfigLayers, loadProjectConfig } from './config.js'
 import { milestoneStates, budgetRefusal, runFooter } from './store.js'
 import { createWorkspaceRegistry } from './workspaces.js'
 import { buildProtocolText, buildProtocolOffText, SKILL_BODY } from './prompts.js'
 import { measureLevel1Context } from './dsh-compat.js'
-import { autoPairAfterConfig } from './models.js'
+import { applyConfigChange } from './config-apply.js'
 import { installBoardRoute } from './board-route.js'
 import { RUN_FOOTER_TOOLS, withRunFooter, setResultFooter, ADVANCE_TOOLS, EXECUTION_TOOLS, strictAdjacencyDenial } from './guards.js'
 import { resolveInside } from './util.js'
-import { makeModelSetupTool, makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool } from './tools/l1.js'
+import { makeModelSetupTool, makeLockTool, makePlanTool, makeStatusTool, makeSpawnModuleLeadTool, makeSendToLeadTool, makeDrainLeadsTool, makeCheckpointTool, makeClassifyTool, makeSelftestTool, makeAcceptMilestoneTool, makeConfigSetTool } from './tools/l1.js'
 import { makeKnowledgeTools } from './tools/knowledge.js'
 import { makeDecomposeTool, makeExecuteLocalTool, makeExecuteBatchTool, makeReviewTool, makeSpawnLocalExecutorTool, makeRegisterOutputTool } from './tools/l2l3.js'
 import { installSuperagentBridge } from './superagent-bridge.js'
@@ -30,6 +30,11 @@ const inject = ['tools', 'systemPrompt', 'skills', 'commands', 'llm']
 // `/pipe-config mode auto` + reload restores the full surface.
 export const OFF_MODE_TOOLS = new Set([
   'pipeline_status',
+  // v134 — with the pipeline off, the L1 must still be able to repair/restore
+  // configuration (switch models, flip level3Mode) without the user pasting
+  // slash commands; it sits outside EXECUTION_TOOLS so no budget/off refusal
+  // path touches it.
+  'pipeline_config_set',
   'pipeline_classify',
   'pipeline_selftest',
   'pipeline_scan',
@@ -60,12 +65,14 @@ function definitionStore() {
   return { store, stateDir: '', record: () => ({}), tracePath: () => '', boardPath: () => '', saveRun: () => {}, snapshotBoard: () => {}, bindSession: () => true }
 }
 
-function buildEntryTools(ctx, cfg, r, wsCfg) {
+function buildEntryTools(ctx, cfg, r, wsCfg, registry = null) {
   // v132 (C7): tools bind the PER-ROOT merged view when the registry supplies one
   // (project layer applied); shared/global code paths keep using the global cfg.
+  // v134: model_setup + config_set additionally take the registry so their writes
+  // land in the layer that actually governs this workspace.
   const c = wsCfg || cfg
   return [
-    makeModelSetupTool(ctx, c, r),
+    makeModelSetupTool(ctx, c, r, registry),
     makeLockTool(ctx, c, r),
     makePlanTool(ctx, c, r),
     makeDecomposeTool(ctx, c, r),
@@ -82,6 +89,7 @@ function buildEntryTools(ctx, cfg, r, wsCfg) {
     makeRegisterOutputTool(ctx, c, r),
     makeSelftestTool(ctx, c, r),
     makeAcceptMilestoneTool(ctx, c, r),
+    makeConfigSetTool(ctx, c, r, registry),
     ...makeKnowledgeTools(ctx, c, r),
   ]
 }
@@ -111,7 +119,11 @@ function apply(ctx, config) {
   const registry = createWorkspaceRegistry({
     ctx,
     cfg,
-    buildTools: (storeR, wsCfg) => buildEntryTools(ctx, cfg, storeR, wsCfg),
+    // v134: the registry hands its per-root view to buildTools AND reaches the
+    // tools that write configuration (model_setup / config_set) so their writes
+    // land in the layer that governs the workspace. `registry` is not assigned
+    // until createWorkspaceRegistry returns, so read it lazily inside the closure.
+    buildTools: (storeR, wsCfg) => buildEntryTools(ctx, cfg, storeR, wsCfg, registry),
     log: (msg) => console.log(msg),
   })
 
@@ -324,57 +336,10 @@ function apply(ctx, config) {
     description: 'view or change the three-tier orchestrator configuration (models, thresholds, budget)',
     input: { hint: '[<key> [<value>] [mode=agent] [provider=<pid>] | list | reset]' },
     handler: async (invocation) => {
-      // v132 (C7/C8): a workspace whose <devDir>/pipeline-project.json carries keys
-      // edits THAT file instead of the global config — otherwise every write here is
-      // silently re-shadowed by the project layer at the next store load.
-      let entry = null
-      try {
-        entry = registry.peek?.(invocation) ?? registry.resolve?.(invocation) ?? null
-      } catch {
-        // A host without session plumbing (verify harness, bare daemon) simply has no
-        // workspace context: fall back to the global view exactly like pre-v132.
-      }
-      const wsCfg = entry?.cfg || cfg
-      // v132 (C7): reset's project-layer warning must read the ANCHORED path
-      // (<root>/<devDir>/pipeline-project.json), not the cwd-relative legacy one.
-      const result = handleConfigCommand(wsCfg, invocation.rawInput, { workspaceRoot: entry?.root })
-      let redirected = false
-      if (result?.kind === 'success' && Array.isArray(result.changed) && result.changed.length > 0 && entry?.root) {
-        try {
-          const projLayer = loadProjectConfig(wsCfg.devDir, entry.root)
-          if (Object.keys(projLayer).length > 0) {
-            const devAbs = resolveInside(entry.root, wsCfg.devDir || DEFAULT_CONFIG.devDir, 'devDir')
-            const file = join(devAbs, 'pipeline-project.json')
-            const merged = { ...projLayer }
-            for (const k of result.changed) merged[k] = wsCfg[k]
-            mkdirSync(devAbs, { recursive: true })
-            writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8')
-            redirected = true
-            result.text = `${result.text}\n（本项目存在 ${relative(entry.root, file).replace(/\\/g, '/')}，改动已写入项目层而不是全局配置）`
-          }
-        } catch { /* best-effort: global persistence already happened */ }
-      }
-      if (result?.kind !== 'success' || !Array.isArray(result.changed) || result.changed.length === 0) return result
-      try {
-        // v130 — pass the workspace store so the L1 retune can read the live
-        // session's real context window (store.context.level1Window).
-        const l1Store = entry?.r?.store ?? null
-        const notes = await autoPairAfterConfig(ctx, wsCfg, result.changed, { store: l1Store })
-        if (notes.length > 0) result.text = `${result.text}\n${notes.join('\n')}`
-        // v132 (C8): pairing corrections land in the same layer as the edit above.
-        if (redirected && entry?.root) {
-          try {
-            const projLayer = loadProjectConfig(wsCfg.devDir, entry.root)
-            const devAbs = resolveInside(entry.root, wsCfg.devDir || DEFAULT_CONFIG.devDir, 'devDir')
-            const file = join(devAbs, 'pipeline-project.json')
-            const merged = { ...projLayer }
-            for (const k of Object.keys(projLayer)) if (k in wsCfg) merged[k] = wsCfg[k]
-            writeFileSync(file, JSON.stringify(merged, null, 2), 'utf8')
-          } catch { /* best-effort */ }
-        }
-      } catch {
-        // pairing is best-effort; the config change itself already succeeded
-      }
+      // v134 — the full layer-aware pipeline (parse → project-layer redirect →
+      // pairing/tune → re-sync) now lives in config-apply.applyConfigChange,
+      // shared verbatim with the L1-callable pipeline_config_set tool.
+      const { result } = await applyConfigChange(ctx, cfg, registry, invocation.rawInput, invocation)
       return result
     },
   })

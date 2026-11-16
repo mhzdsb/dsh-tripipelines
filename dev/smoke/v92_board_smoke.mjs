@@ -22,7 +22,7 @@ const check = (label, cond, extra) => {
   }
 }
 
-const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js', 'superagent-bridge.js']
+const flat = ['util.js', 'store.js', 'gates.js', 'prompts.js', 'dsh-compat.js', 'guards.js', 'board-route.js', 'workspaces.js', 'models.js', 'superagent-bridge.js', 'config-apply.js']
 for (const f of flat) copyFileSync(new URL('lib/' + f, root), join(tmp, f))
 mkdirSync(join(tmp, 'tools'), { recursive: true })
 for (const f of ['l1.js', 'l2l3.js']) copyFileSync(new URL('lib/tools/' + f, root), join(tmp, 'tools', f))
